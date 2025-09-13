@@ -20,8 +20,13 @@ export async function getAssignments({
 
     if (includeSubmissions) {
       const assignmentsWithSubmissions = await service.getAssignmentsWithSubmissions(courseId, 10);
+      
+      // Filter out deleted assignments
+      const activeAssignments = assignmentsWithSubmissions.filter(
+        item => item.assignment.state !== 'DELETED'
+      );
 
-      const formattedAssignments = assignmentsWithSubmissions.map((item) => ({
+      const formattedAssignments = activeAssignments.map((item) => ({
         assignment: {
           id: item.assignment.id,
           courseId: item.assignment.courseId,
@@ -73,8 +78,13 @@ export async function getAssignments({
       };
     } else {
       const assignments = await service.getAllAssignments(courseId);
+      
+      // Filter out deleted assignments
+      const activeAssignments = assignments.filter(
+        assignment => assignment.state !== 'DELETED'
+      );
 
-      const formattedAssignments = assignments.map((assignment) => ({
+      const formattedAssignments = activeAssignments.map((assignment) => ({
         id: assignment.id,
         courseId: assignment.courseId,
         title: assignment.title,

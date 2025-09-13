@@ -185,7 +185,11 @@ export async function getComprehensiveClassroomData({
           // Process assignments with submissions
           const assignments: AssignmentInfo[] = [];
           if (assignmentsResponse.status === 'fulfilled') {
-            const limitedAssignments = assignmentsResponse.value.slice(0, maxAssignmentsPerCourse);
+            // Filter out deleted assignments before limiting
+            const activeAssignments = assignmentsResponse.value.filter(
+              assignment => assignment.state !== 'DELETED'
+            );
+            const limitedAssignments = activeAssignments.slice(0, maxAssignmentsPerCourse);
 
             for (const assignment of limitedAssignments) {
               if (!assignment.id) continue;

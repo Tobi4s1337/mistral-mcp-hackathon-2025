@@ -228,14 +228,13 @@ export const getServer = (): McpServer => {
           
           for (const attachment of attachments) {
             if (attachment.driveFile?.id) {
-              // Construct Google Drive download URL
-              const pdfUrl = `https://drive.google.com/uc?export=download&id=${attachment.driveFile.id}`;
-              
+              // We'll download and process the file later
               gradableSubmissions.push({
                 assignmentId,
                 userName: studentMap.get(submission.userId) || 'Unknown Student',
                 userId: submission.userId,
-                pdfUrl,
+                driveFileId: attachment.driveFile.id,
+                driveFileName: attachment.driveFile.title || 'submission.pdf',
                 submissionId: submission.id,
                 state: submission.state
               });
@@ -253,16 +252,132 @@ export const getServer = (): McpServer => {
           };
         }
 
+        // Import necessary modules for file handling
+        const fs = await import('fs/promises');
+        const path = await import('path');
+        const os = await import('os');
+        
         // Grade all submissions in parallel
         console.log(`Grading ${gradableSubmissions.length} submissions in parallel...`);
         
-        const gradingPromises = gradableSubmissions.map(sub => 
-          gradingService.gradeStudentSubmission(sub)
-            .catch(error => ({
+        const gradingPromises = gradableSubmissions.map(async (sub) => {
+          try {
+            // Download the PDF from Google Drive
+            console.log(`Processing PDF submission from ${sub.userName} (${sub.userId})`);
+            
+            // Create downloads directory for inspection
+            const downloadsDir = path.join(process.cwd(), 'downloaded-submissions');
+            await fs.mkdir(downloadsDir, { recursive: true });
+            
+            const savedFilePath = path.join(downloadsDir, `${sub.submissionId}_${sub.userName.replace(/[^a-z0-9]/gi, '_')}_${sub.driveFileName}`);
+            
+            try {
+              // Download file from Google Drive
+              const drive = await classroomService.client.getDriveClient();
+              console.log(`Downloading Drive file ${sub.driveFileId} for ${sub.userName}`);
+              
+              // Get file metadata first
+              const fileMetadata = await drive.files.get({
+                fileId: sub.driveFileId,
+                fields: 'name,mimeType,size'
+              });
+              
+              console.log(`File metadata for ${sub.userName}:`, {
+                name: fileMetadata.data.name,
+                mimeType: fileMetadata.data.mimeType,
+                size: fileMetadata.data.size
+              });
+              
+              const response = await drive.files.get(
+                { fileId: sub.driveFileId, alt: 'media' },
+                { responseType: 'arraybuffer' }
+              );
+              
+              const arrayBuffer = response.data as ArrayBuffer;
+              console.log(`Downloaded ${arrayBuffer.byteLength} bytes for ${sub.userName}`);
+              
+              // Save to file for inspection
+              await fs.writeFile(savedFilePath, Buffer.from(arrayBuffer));
+              console.log(`✅ PDF saved for inspection: ${savedFilePath}`);
+              
+              // Check if it's actually a PDF
+              const fileBuffer = await fs.readFile(savedFilePath);
+              const isPDF = fileBuffer.slice(0, 4).toString() === '%PDF';
+              if (!isPDF) {
+                console.warn(`⚠️ File does not appear to be a PDF for ${sub.userName}. First bytes: ${fileBuffer.slice(0, 20).toString('hex')}`);
+              }
+              
+              // Upload to S3 first for reliable OCR processing
+              console.log(`📤 Uploading PDF to S3 for ${sub.userName}...`);
+              const { pdfExportService } = await import('./worksheets/pdf.js');
+              
+              let pdfUrl: string;
+              try {
+                const s3Url = await pdfExportService.uploadToS3(
+                  fileBuffer,
+                  `${sub.submissionId}_${sub.userName.replace(/[^a-z0-9]/gi, '_')}.pdf`,
+                  {
+                    studentName: sub.userName,
+                    assignmentId: sub.assignmentId,
+                    submissionId: sub.submissionId || 'unknown'
+                  }
+                );
+                console.log(`✅ PDF uploaded to S3: ${s3Url}`);
+                pdfUrl = s3Url;
+              } catch (s3Error) {
+                console.warn(`⚠️ S3 upload failed for ${sub.userName}, falling back to local file:`, s3Error);
+                // Fallback to local file if S3 fails
+                pdfUrl = `file://${savedFilePath}`;
+              }
+              
+              // Grade the submission using S3 URL or local file
+              const result = await gradingService.gradeStudentSubmission({
+                assignmentId: sub.assignmentId,
+                userName: sub.userName,
+                userId: sub.userId,
+                pdfUrl: pdfUrl
+              });
+              
+              // Keep the file for inspection - don't delete
+              console.log(`📁 Keeping downloaded PDF for inspection: ${savedFilePath}`);
+              
+              return result;
+            } catch (downloadError: any) {
+              console.error(`Failed to download/process PDF for ${sub.userName}:`, downloadError);
+              
+              // Try alternative download method using classroom client
+              try {
+                const downloadPath = await classroomService.client.downloadFile(
+                  sub.driveFileId,
+                  savedFilePath
+                );
+                
+                console.log(`✅ PDF saved via alternative method: ${downloadPath}`);
+                
+                // Use file path for OCR
+                const filePdfUrl = `file://${downloadPath}`;
+                
+                const result = await gradingService.gradeStudentSubmission({
+                  assignmentId: sub.assignmentId,
+                  userName: sub.userName,
+                  userId: sub.userId,
+                  pdfUrl: filePdfUrl
+                });
+                
+                // Keep the file for inspection
+                console.log(`📁 Keeping downloaded PDF for inspection: ${downloadPath}`);
+                
+                return result;
+              } catch (altError) {
+                throw new Error(`Could not download PDF: ${downloadError.message}`);
+              }
+            }
+          } catch (error: any) {
+            return {
               userName: sub.userName,
               userId: sub.userId,
               assignmentId: sub.assignmentId,
-              submittedPdfUrl: sub.pdfUrl,
+              submittedPdfUrl: `Drive file: ${sub.driveFileId}`,
               gradedAt: new Date().toISOString(),
               overallScore: 0,
               totalPossiblePoints: 0,
@@ -277,8 +392,9 @@ export const getServer = (): McpServer => {
                 generalRecommendation: "Unable to grade submission"
               },
               error: true
-            }))
-        );
+            };
+          }
+        });
 
         const results = await Promise.all(gradingPromises);
 

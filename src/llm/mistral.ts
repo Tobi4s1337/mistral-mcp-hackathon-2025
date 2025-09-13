@@ -170,10 +170,12 @@ class MistralClient {
   ): Promise<OCRResult> {
     const {
       model = "mistral-ocr-latest",
-      includeImageBase64 = true
+      includeImageBase64 = false // Changed to false to reduce response size for URLs
     } = options;
 
     try {
+      console.log(`Starting OCR with URL: ${documentUrl.substring(0, 100)}...`);
+      
       const response = await this.client.ocr.process({
         model,
         document: {
@@ -183,7 +185,50 @@ class MistralClient {
         includeImageBase64
       });
 
-      return response as OCRResult;
+      console.log("OCR API Response:", {
+        hasContent: !!(response as any).content,
+        contentLength: (response as any).content?.length || 0,
+        responseKeys: Object.keys(response as any),
+        hasPages: !!(response as any).pages,
+        pagesCount: (response as any).pages?.length || 0
+      });
+
+      // Extract text from pages if available
+      let extractedContent = "";
+      
+      if ((response as any).pages && Array.isArray((response as any).pages)) {
+        console.log(`Extracting text from ${(response as any).pages.length} pages`);
+        
+        for (const page of (response as any).pages) {
+          // Mistral OCR returns markdown field instead of text
+          if (page.markdown) {
+            extractedContent += page.markdown + "\n";
+          } else if (page.text) {
+            extractedContent += page.text + "\n";
+          }
+          // Also check for blocks/paragraphs/lines structure
+          if (page.blocks) {
+            for (const block of page.blocks) {
+              if (block.text) {
+                extractedContent += block.text + "\n";
+              }
+            }
+          }
+        }
+      }
+
+      const result: OCRResult = {
+        content: extractedContent || (response as any).content || (response as any).text || "",
+        images: (response as any).images,
+        metadata: (response as any).metadata || {
+          model: (response as any).model,
+          pageCount: (response as any).pages?.length || 0
+        }
+      };
+      
+      console.log(`Extracted content length: ${result.content.length} characters`);
+
+      return result;
     } catch (error) {
       console.error("OCR processing error:", error);
       throw new Error(`OCR processing failed: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -196,10 +241,12 @@ class MistralClient {
   ): Promise<OCRResult> {
     const {
       model = "mistral-ocr-latest",
-      includeImageBase64 = true
+      includeImageBase64 = false // Changed to false to reduce response size
     } = options;
 
     try {
+      console.log(`Starting OCR with base64 PDF, size: ${base64Pdf.length}`);
+      
       const response = await this.client.ocr.process({
         model,
         document: {
@@ -209,7 +256,59 @@ class MistralClient {
         includeImageBase64
       });
 
-      return response as OCRResult;
+      console.log("OCR API Response:", {
+        hasContent: !!(response as any).content,
+        contentLength: (response as any).content?.length || 0,
+        responseKeys: Object.keys(response as any),
+        hasPages: !!(response as any).pages,
+        pagesCount: (response as any).pages?.length || 0
+      });
+
+      // Extract text from pages if available
+      let extractedContent = "";
+      
+      if ((response as any).pages && Array.isArray((response as any).pages)) {
+        console.log(`Extracting text from ${(response as any).pages.length} pages`);
+        
+        for (const page of (response as any).pages) {
+          // Mistral OCR returns markdown field instead of text
+          if (page.markdown) {
+            extractedContent += page.markdown + "\n";
+          } else if (page.text) {
+            extractedContent += page.text + "\n";
+          }
+          // Also check for blocks/paragraphs/lines structure
+          if (page.blocks) {
+            for (const block of page.blocks) {
+              if (block.text) {
+                extractedContent += block.text + "\n";
+              }
+              if (block.paragraphs) {
+                for (const paragraph of block.paragraphs) {
+                  if (paragraph.text) {
+                    extractedContent += paragraph.text + "\n";
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Handle the response structure properly
+      const result: OCRResult = {
+        content: extractedContent || (response as any).content || (response as any).text || "",
+        images: (response as any).images,
+        metadata: (response as any).metadata || {
+          model: (response as any).model,
+          pageCount: (response as any).pages?.length || 0,
+          usageInfo: (response as any).usageInfo
+        }
+      };
+      
+      console.log(`Extracted content length: ${result.content.length} characters`);
+
+      return result;
     } catch (error) {
       console.error("OCR processing error:", error);
       throw new Error(`OCR processing failed: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -220,13 +319,78 @@ class MistralClient {
     filePath: string,
     options: OCROptions = {}
   ): Promise<OCRResult> {
+    const {
+      model = "mistral-ocr-latest",
+      includeImageBase64 = false
+    } = options;
+
     try {
+      console.log(`Processing OCR from file: ${filePath}`);
+      
+      // Read the file and convert to base64 data URL
       const pdfBuffer = fs.readFileSync(filePath);
       const base64Pdf = pdfBuffer.toString('base64');
-      return this.processOCRFromBase64(base64Pdf, options);
+      
+      console.log(`Converting PDF to base64 data URL, size: ${pdfBuffer.length} bytes`);
+      
+      // Use the base64 data URL approach which is documented to work
+      const response = await this.client.ocr.process({
+        model,
+        document: {
+          type: "document_url",
+          documentUrl: `data:application/pdf;base64,${base64Pdf}`
+        },
+        includeImageBase64
+      });
+      
+      console.log("OCR API Response from file:", {
+        hasContent: !!(response as any).content,
+        responseKeys: Object.keys(response as any),
+        hasPages: !!(response as any).pages,
+        pagesCount: (response as any).pages?.length || 0
+      });
+      
+      // Extract text from response
+      let extractedContent = "";
+      
+      if ((response as any).pages && Array.isArray((response as any).pages)) {
+        console.log(`Extracting text from ${(response as any).pages.length} pages`);
+        
+        for (const page of (response as any).pages) {
+          // Log page structure to understand it better
+          console.log(`Page structure keys:`, Object.keys(page));
+          
+          // Mistral OCR returns markdown field instead of text
+          if (page.markdown) {
+            extractedContent += page.markdown + "\n";
+          } else if (page.text) {
+            extractedContent += page.text + "\n";
+          }
+          if (page.blocks) {
+            for (const block of page.blocks) {
+              if (block.text) {
+                extractedContent += block.text + "\n";
+              }
+            }
+          }
+        }
+      }
+      
+      const result: OCRResult = {
+        content: extractedContent || (response as any).content || (response as any).text || "",
+        images: (response as any).images,
+        metadata: (response as any).metadata || {
+          model: (response as any).model,
+          pageCount: (response as any).pages?.length || 0
+        }
+      };
+      
+      console.log(`Extracted content length from file: ${result.content.length} characters`);
+      
+      return result;
     } catch (error) {
-      console.error("File reading error:", error);
-      throw new Error(`Failed to read PDF file: ${error instanceof Error ? error.message : "Unknown error"}`);
+      console.error("File OCR processing error:", error);
+      throw new Error(`Failed to process PDF file: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   }
 

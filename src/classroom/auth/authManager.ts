@@ -121,6 +121,26 @@ export class AuthManager {
 
   async getAuthClient(): Promise<OAuth2Client> {
     if (this.authClient) {
+      // Check if token needs refresh (expires in less than 5 minutes)
+      const credentials = this.authClient.credentials;
+      if (credentials.expiry_date) {
+        const now = Date.now();
+        const expiresIn = credentials.expiry_date - now;
+        
+        // If token expires in less than 5 minutes, refresh it proactively
+        if (expiresIn < 5 * 60 * 1000) {
+          console.log('Token expiring soon, refreshing proactively...');
+          try {
+            await this.authClient.refreshAccessToken();
+            // Save refreshed tokens
+            const newTokens = this.authClient.credentials;
+            await fs.writeFile(TOKEN_PATH, JSON.stringify(newTokens));
+          } catch (error) {
+            console.error('Failed to refresh token:', error);
+            // Continue with existing token, it might still work
+          }
+        }
+      }
       return this.authClient;
     }
 
@@ -132,10 +152,28 @@ export class AuthManager {
       );
     }
 
-    const credentials = JSON.parse(await fs.readFile(TOKEN_PATH, 'utf-8'));
+    const tokens = JSON.parse(await fs.readFile(TOKEN_PATH, 'utf-8'));
 
-    const auth = new google.auth.OAuth2();
-    auth.setCredentials(credentials);
+    // Need to get client_id and client_secret from credentials.json
+    const credentialsPath = './credentials.json';
+    let clientId: string | undefined;
+    let clientSecret: string | undefined;
+    
+    try {
+      const credentialsContent = await fs.readFile(credentialsPath, 'utf-8');
+      const credentials = JSON.parse(credentialsContent).web;
+      clientId = credentials.client_id;
+      clientSecret = credentials.client_secret;
+    } catch (error) {
+      console.error('Warning: Could not read credentials.json for client ID/secret');
+    }
+
+    const auth = new google.auth.OAuth2(
+      clientId,
+      clientSecret,
+      'http://localhost:3000/auth/google/callback'
+    );
+    auth.setCredentials(tokens);
 
     this.setupTokenRefreshHandler(auth);
     this.authClient = auth;

@@ -78,15 +78,55 @@ export class GradingService {
     let studentWorkContent: string;
     
     try {
-      const ocrResult = await mistralClient.processOCR(pdfUrl);
+      let ocrResult;
+      
+      // Check if we have a file path (for file-based OCR) or URL
+      if (pdfUrl.startsWith('file://')) {
+        // Local file path
+        const filePath = pdfUrl.replace('file://', '');
+        console.log(`Using file-based OCR for ${userName}, file: ${filePath}`);
+        ocrResult = await mistralClient.processOCRFromFile(filePath);
+      } else if (pdfUrl.startsWith('data:application/pdf;base64,')) {
+        // Extract base64 data from data URL
+        const base64Data = pdfUrl.replace('data:application/pdf;base64,', '');
+        console.log(`Using base64 OCR for ${userName}, data length: ${base64Data.length}`);
+        ocrResult = await mistralClient.processOCRFromBase64(base64Data);
+      } else if (pdfUrl.startsWith('http://') || pdfUrl.startsWith('https://')) {
+        // Regular URL - including S3 URLs
+        console.log(`Using URL OCR for ${userName}: ${pdfUrl}`);
+        
+        // For S3 URLs, we can use direct URL processing
+        if (pdfUrl.includes('.s3.') || pdfUrl.includes('s3.amazonaws.com')) {
+          console.log(`Processing S3 URL directly with OCR for ${userName}`);
+          ocrResult = await mistralClient.processOCR(pdfUrl);
+        } else {
+          // For other URLs, use standard processing
+          ocrResult = await mistralClient.processOCR(pdfUrl);
+        }
+      } else {
+        // Unknown URL format
+        console.warn(`Unknown URL format for ${userName}: ${pdfUrl}`);
+        ocrResult = await mistralClient.processOCR(pdfUrl);
+      }
+      
+      console.log(`OCR result for ${userName}:`, {
+        hasContent: !!ocrResult.content,
+        contentLength: ocrResult.content?.length || 0,
+        contentPreview: ocrResult.content?.substring(0, 100)
+      });
+      
       studentWorkContent = ocrResult.content || "";
       
-      if (!studentWorkContent) {
-        throw new Error("OCR returned empty content");
+      if (!studentWorkContent || studentWorkContent.trim().length === 0) {
+        // If OCR returns empty, provide a fallback response
+        console.warn(`OCR returned empty content for ${userName}, using fallback`);
+        studentWorkContent = "Unable to extract text from PDF. The document may be an image-only PDF or have formatting issues.";
       }
     } catch (error) {
       console.error("OCR processing error:", error);
-      throw new Error(`Failed to process student PDF: ${error instanceof Error ? error.message : "Unknown error"}`);
+      // Provide a fallback instead of failing completely
+      console.warn(`OCR failed for ${userName}, using error fallback`);
+      studentWorkContent = `OCR processing failed: ${error instanceof Error ? error.message : "Unknown error"}. Unable to extract submission content.`;
     }
 
     // Step 3: Grade the submission using LangChain Mistral

@@ -116,20 +116,61 @@ async function clearAllAssignments() {
         if (!assignment.id) continue;
         
         try {
-          // Delete the assignment
           const classroom = await client.getClient();
-          await classroom.courses.courseWork.delete({
+          
+          // First check if already deleted
+          const currentAssignment = await classroom.courses.courseWork.get({
             courseId: courseInfo.courseId,
             id: assignment.id
           });
           
-          deletedCount++;
-          console.log(`  ${colors.green}✓${colors.reset} Deleted: ${assignment.title || "Untitled"} ${colors.dim}(${assignment.id})${colors.reset}`);
+          if (currentAssignment.data.state === 'DELETED') {
+            console.log(`  ${colors.dim}○${colors.reset} Already deleted: ${assignment.title || "Untitled"}`);
+            continue;
+          }
+          
+          // Try to delete the assignment
+          try {
+            await classroom.courses.courseWork.delete({
+              courseId: courseInfo.courseId,
+              id: assignment.id
+            });
+            
+            deletedCount++;
+            console.log(`  ${colors.green}✓${colors.reset} Deleted: ${assignment.title || "Untitled"} ${colors.dim}(${assignment.id})${colors.reset}`);
+          } catch (deleteError: any) {
+            // If delete fails, try to patch to DELETED state
+            if (deleteError.message.includes('Precondition check failed') || 
+                deleteError.message.includes('ProjectPermissionDenied')) {
+              try {
+                await classroom.courses.courseWork.patch({
+                  courseId: courseInfo.courseId,
+                  id: assignment.id,
+                  updateMask: 'state',
+                  requestBody: {
+                    state: 'DELETED',
+                  },
+                });
+                
+                deletedCount++;
+                console.log(`  ${colors.yellow}✓${colors.reset} Marked as deleted: ${assignment.title || "Untitled"} ${colors.dim}(via patch)${colors.reset}`);
+              } catch (patchError: any) {
+                failedCount++;
+                const errorMsg = `Cannot delete "${assignment.title || assignment.id}" - ${deleteError.message.includes('ProjectPermissionDenied') ? 'created via web UI' : 'permission denied'}`;
+                errors.push(errorMsg);
+                console.log(`  ${colors.red}✗${colors.reset} ${errorMsg}`);
+              }
+            } else {
+              throw deleteError;
+            }
+          }
         } catch (error: any) {
-          failedCount++;
-          const errorMsg = `Failed to delete "${assignment.title || assignment.id}" in ${courseInfo.courseName}: ${error.message}`;
-          errors.push(errorMsg);
-          console.log(`  ${colors.red}✗${colors.reset} ${errorMsg}`);
+          if (!error.message.includes('Cannot delete')) {
+            failedCount++;
+            const errorMsg = `Failed to delete "${assignment.title || assignment.id}" in ${courseInfo.courseName}: ${error.message}`;
+            errors.push(errorMsg);
+            console.log(`  ${colors.red}✗${colors.reset} ${errorMsg}`);
+          }
         }
       }
     }
