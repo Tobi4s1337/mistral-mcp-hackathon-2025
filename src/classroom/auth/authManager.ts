@@ -10,6 +10,10 @@ import crypto from 'crypto';
 const TOKEN_PATH = path.join(process.cwd(), 'tokens.json');
 const CREDENTIALS_PATH = path.join(process.cwd(), 'credentials.json');
 
+// Check for environment variables first
+const GOOGLE_TOKENS = process.env.GOOGLE_TOKENS;
+const GOOGLE_CREDENTIALS = process.env.GOOGLE_CREDENTIALS;
+
 export class AuthManager {
   private static instance: AuthManager;
   private authClient: OAuth2Client | null = null;
@@ -37,16 +41,23 @@ export class AuthManager {
   async authenticateAndSaveCredentials(): Promise<OAuth2Client> {
     console.error('Starting authentication process...');
 
-    try {
-      await fs.access(CREDENTIALS_PATH);
-    } catch {
-      throw new Error(
-        'credentials.json not found. Please download OAuth 2.0 credentials from Google Cloud Console and save as credentials.json'
-      );
+    let credentialsContent: string;
+    
+    // Try environment variable first, then file
+    if (GOOGLE_CREDENTIALS) {
+      credentialsContent = GOOGLE_CREDENTIALS;
+    } else {
+      try {
+        await fs.access(CREDENTIALS_PATH);
+        credentialsContent = await fs.readFile(CREDENTIALS_PATH, 'utf8');
+      } catch {
+        throw new Error(
+          'Google credentials not found. Set GOOGLE_CREDENTIALS env variable or save credentials.json file'
+        );
+      }
     }
 
     // Load credentials
-    const credentialsContent = await fs.readFile(CREDENTIALS_PATH, 'utf8');
     const credentials = JSON.parse(credentialsContent).web;
 
     // Create OAuth2 client
@@ -69,8 +80,14 @@ export class AuthManager {
     // Create local server to handle callback
     const auth = await this.waitForAuthorizationCode(oauth2Client, credentials.redirect_uris[0]);
 
-    await fs.writeFile(TOKEN_PATH, JSON.stringify(auth.credentials));
-    console.error('Authentication successful, credentials saved to tokens.json');
+    // Save tokens to file if not using env variable
+    if (!GOOGLE_TOKENS) {
+      await fs.writeFile(TOKEN_PATH, JSON.stringify(auth.credentials));
+      console.error('Authentication successful, credentials saved to tokens.json');
+    } else {
+      console.error('Authentication successful! Add this to your environment variables:');
+      console.error('GOOGLE_TOKENS=' + JSON.stringify(auth.credentials));
+    }
 
     this.authClient = auth;
     this.setupTokenRefreshHandler(auth);
@@ -132,9 +149,11 @@ export class AuthManager {
           console.log('Token expiring soon, refreshing proactively...');
           try {
             await this.authClient.refreshAccessToken();
-            // Save refreshed tokens
-            const newTokens = this.authClient.credentials;
-            await fs.writeFile(TOKEN_PATH, JSON.stringify(newTokens));
+            // Save refreshed tokens only if using file storage
+            if (!GOOGLE_TOKENS) {
+              const newTokens = this.authClient.credentials;
+              await fs.writeFile(TOKEN_PATH, JSON.stringify(newTokens));
+            }
           } catch (error) {
             console.error('Failed to refresh token:', error);
             // Continue with existing token, it might still work
@@ -144,34 +163,56 @@ export class AuthManager {
       return this.authClient;
     }
 
-    try {
-      await fs.access(TOKEN_PATH);
-    } catch {
-      throw new Error(
-        'Authentication required. Please run "npm run auth" to authenticate with Google Classroom.'
-      );
+    let tokens: any;
+    
+    // Try environment variable first, then file
+    if (GOOGLE_TOKENS) {
+      try {
+        tokens = JSON.parse(GOOGLE_TOKENS);
+      } catch (error) {
+        throw new Error('Invalid GOOGLE_TOKENS environment variable. Must be valid JSON.');
+      }
+    } else {
+      try {
+        await fs.access(TOKEN_PATH);
+        tokens = JSON.parse(await fs.readFile(TOKEN_PATH, 'utf-8'));
+      } catch {
+        throw new Error(
+          'Authentication required. Set GOOGLE_TOKENS env variable or run "npm run auth" to authenticate.'
+        );
+      }
     }
 
-    const tokens = JSON.parse(await fs.readFile(TOKEN_PATH, 'utf-8'));
-
-    // Need to get client_id and client_secret from credentials.json
-    const credentialsPath = './credentials.json';
+    // Get client_id and client_secret from env variable or file
     let clientId: string | undefined;
     let clientSecret: string | undefined;
+    let redirectUri: string | undefined;
     
-    try {
-      const credentialsContent = await fs.readFile(credentialsPath, 'utf-8');
-      const credentials = JSON.parse(credentialsContent).web;
-      clientId = credentials.client_id;
-      clientSecret = credentials.client_secret;
-    } catch (error) {
-      console.error('Warning: Could not read credentials.json for client ID/secret');
+    if (GOOGLE_CREDENTIALS) {
+      try {
+        const credentials = JSON.parse(GOOGLE_CREDENTIALS).web;
+        clientId = credentials.client_id;
+        clientSecret = credentials.client_secret;
+        redirectUri = credentials.redirect_uris?.[0] || 'http://localhost:3000/auth/google/callback';
+      } catch (error) {
+        console.error('Warning: Could not parse GOOGLE_CREDENTIALS env variable');
+      }
+    } else {
+      try {
+        const credentialsContent = await fs.readFile(CREDENTIALS_PATH, 'utf-8');
+        const credentials = JSON.parse(credentialsContent).web;
+        clientId = credentials.client_id;
+        clientSecret = credentials.client_secret;
+        redirectUri = credentials.redirect_uris?.[0] || 'http://localhost:3000/auth/google/callback';
+      } catch (error) {
+        console.error('Warning: Could not read credentials for client ID/secret');
+      }
     }
 
     const auth = new google.auth.OAuth2(
       clientId,
       clientSecret,
-      'http://localhost:3000/auth/google/callback'
+      redirectUri || 'http://localhost:3000/auth/google/callback'
     );
     auth.setCredentials(tokens);
 
@@ -185,27 +226,43 @@ export class AuthManager {
     auth.on('tokens', async (tokens) => {
       console.error('Refreshing authentication tokens...');
 
-      try {
-        const existingCredentials = JSON.parse(await fs.readFile(TOKEN_PATH, 'utf-8'));
+      // Only save to file if not using environment variable
+      if (!GOOGLE_TOKENS) {
+        try {
+          const existingCredentials = JSON.parse(await fs.readFile(TOKEN_PATH, 'utf-8'));
 
-        if (tokens.refresh_token) {
-          existingCredentials.refresh_token = tokens.refresh_token;
+          if (tokens.refresh_token) {
+            existingCredentials.refresh_token = tokens.refresh_token;
+          }
+
+          if (tokens.access_token) {
+            existingCredentials.access_token = tokens.access_token;
+            existingCredentials.expiry_date = tokens.expiry_date;
+          }
+
+          await fs.writeFile(TOKEN_PATH, JSON.stringify(existingCredentials));
+          console.error('Tokens refreshed and saved successfully');
+        } catch (error) {
+          console.error('Error saving refreshed tokens:', error);
         }
-
-        if (tokens.access_token) {
-          existingCredentials.access_token = tokens.access_token;
-          existingCredentials.expiry_date = tokens.expiry_date;
-        }
-
-        await fs.writeFile(TOKEN_PATH, JSON.stringify(existingCredentials));
-        console.error('Tokens refreshed and saved successfully');
-      } catch (error) {
-        console.error('Error saving refreshed tokens:', error);
+      } else {
+        console.error('Tokens refreshed (using env variable, not persisting to file)');
       }
     });
   }
 
   async isAuthenticated(): Promise<boolean> {
+    // Check env variable first
+    if (GOOGLE_TOKENS) {
+      try {
+        JSON.parse(GOOGLE_TOKENS);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    
+    // Then check file
     try {
       await fs.access(TOKEN_PATH);
       return true;
