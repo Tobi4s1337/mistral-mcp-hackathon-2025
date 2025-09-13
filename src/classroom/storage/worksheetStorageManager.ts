@@ -4,6 +4,7 @@ import * as path from 'path';
 interface WorksheetRecord {
   worksheetPdfUrl: string;
   answerKeyPdfUrl: string;
+  answerKeyHtml?: string; // HTML content of the answer key
   title: string;
   subject?: string;
   grade?: string;
@@ -72,6 +73,7 @@ export class WorksheetStorageManager {
       summary?: string;
       totalPoints?: number;
       gradingBreakdown?: Array<{ section: string; points: number; }>;
+      answerKeyHtml?: string;
     }
   ): Promise<void> {
     await this.ensureInitialized();
@@ -79,6 +81,7 @@ export class WorksheetStorageManager {
     this.data.worksheets[worksheetPdfUrl] = {
       worksheetPdfUrl,
       answerKeyPdfUrl,
+      answerKeyHtml: metadata?.answerKeyHtml,
       title,
       subject: metadata?.subject,
       grade: metadata?.grade,
@@ -146,6 +149,20 @@ export class WorksheetStorageManager {
     if (!worksheetUrl) return null;
     const worksheet = this.data.worksheets[worksheetUrl];
     return worksheet?.answerKeyPdfUrl || null;
+  }
+
+  async getAnswerKeyHtml(assignmentId: string): Promise<string | null> {
+    await this.ensureInitialized();
+    const worksheetUrl = this.data.assignmentMapping[assignmentId];
+    if (!worksheetUrl) return null;
+    const worksheet = this.data.worksheets[worksheetUrl];
+    return worksheet?.answerKeyHtml || null;
+  }
+
+  async getAnswerKeyHtmlByWorksheetUrl(worksheetPdfUrl: string): Promise<string | null> {
+    await this.ensureInitialized();
+    const worksheet = this.data.worksheets[worksheetPdfUrl];
+    return worksheet?.answerKeyHtml || null;
   }
 
   async getGradingInfo(assignmentId: string): Promise<{

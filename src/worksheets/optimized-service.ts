@@ -220,6 +220,7 @@ FOLLOW THE EXAMPLE FORMAT EXACTLY:
     );
 
     let answerKeyPdfUrl: string | undefined;
+    let answerKeyHtml: string | undefined;
     let totalPoints: number | undefined;
     let gradingBreakdown: Array<{ section: string; points: number; }> | undefined;
 
@@ -227,6 +228,9 @@ FOLLOW THE EXAMPLE FORMAT EXACTLY:
       try {
         // Generate answer key with grading info
         const answerKeyResult = await this.generateAnswerKey(worksheet.html, prompt);
+
+        // Store the answer key HTML
+        answerKeyHtml = answerKeyResult.html;
 
         // Generate answer key PDF and upload to S3
         const answerKeyPdfResult = await pdfExportService.saveWorksheetAsPDF(
@@ -262,7 +266,8 @@ FOLLOW THE EXAMPLE FORMAT EXACTLY:
             grade: worksheet.grade,
             summary: worksheet.summary,
             totalPoints,
-            gradingBreakdown
+            gradingBreakdown,
+            answerKeyHtml
           }
         );
         console.log('Stored worksheet data for future assignment creation');
