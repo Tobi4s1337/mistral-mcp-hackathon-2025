@@ -18,11 +18,16 @@
     "inspector": "mcp-inspector http://localhost:3000/mcp",
     "auth": "tsx src/scripts/auth.ts",
     "test": "tsx src/test-classroom.ts",
-    "test:worksheet": "tsx --env-file=.env src/test-worksheet.ts"
+    "test:worksheet": "tsx --env-file=.env src/test-worksheet.ts",
+    "test:assignment": "tsx --env-file=.env src/scripts/test-worksheet-assignment.ts",
+    "clear:assignments": "tsx --env-file=.env src/scripts/clear-assignments.ts",
+    "clear": "tsx --env-file=.env src/scripts/clear-assignments.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",
     "@google-cloud/local-auth": "^3.0.1",
+    "@langchain/core": "^0.3.75",
+    "@langchain/mistralai": "^0.2.1",
     "@mistralai/mistralai": "^1.0.5",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@types/cors": "^2.8.19",
@@ -32,8 +37,9 @@
     "express": "^5.1.0",
     "google-auth-library": "^10.3.0",
     "googleapis": "^134.0.0",
+    "node-latex": "^3.1.0",
     "uuid": "^11.0.6",
-    "zod": "^3.25.51"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",

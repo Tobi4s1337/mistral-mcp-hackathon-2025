@@ -10,6 +10,8 @@ import {
   createWorksheetAssignment,
 } from "./classroom/tools/index.js";
 import { optimizedWorksheetService } from "./worksheets/index.js";
+import { gradingService } from "./grading/index.js";
+import { ClassroomService } from "./classroom/services/classroomService.js";
 
 export const getServer = (): McpServer => {
   const server = new McpServer(
@@ -170,6 +172,195 @@ export const getServer = (): McpServer => {
       excludeStudentIds: z.array(z.string()).optional().describe('List of student IDs to exclude (only used when assigneeMode is GROUP_WITH_EXCLUSIONS)'),
     },
     async (args) => await createWorksheetAssignment(args)
+  );
+
+  // Register grade all submissions tool
+  server.tool(
+    "google-classroom-grade-all-submissions",
+    "Grades ALL student submissions for a specific assignment using AI-powered OCR and analysis. This tool processes PDF submissions in parallel for maximum efficiency. It extracts text from student work using Mistral OCR, compares against the answer key, awards partial credit, and provides personalized feedback. REQUIRES courseId and assignmentId. The assignment must have an associated answer key (created via generate-worksheet tool). Returns comprehensive grading results including scores by section, overall feedback, and learning recommendations (scaffolding/acceleration needs) for each student. Processes all submissions concurrently for fast batch grading.",
+    {
+      courseId: z.string().describe('The ID of the course. Must be obtained from google-classroom-courses tool first'),
+      assignmentId: z.string().describe('The ID of the assignment to grade. Must be obtained from google-classroom-assignments tool'),
+    },
+    async ({ courseId, assignmentId }) => {
+      try {
+        const classroomService = ClassroomService.getInstance();
+        
+        // Get assignment details
+        const assignment = await classroomService.client.getCourseWork(courseId, assignmentId);
+        if (!assignment) {
+          throw new Error(`Assignment ${assignmentId} not found in course ${courseId}`);
+        }
+
+        // Get all submissions for this assignment
+        const submissionsResponse = await classroomService.client.listStudentSubmissions(
+          courseId,
+          assignmentId,
+          100
+        );
+        
+        const submissions = submissionsResponse.studentSubmissions || [];
+        
+        if (submissions.length === 0) {
+          return {
+            content: [{
+              type: "text",
+              text: `No submissions found for assignment "${assignment.title || assignmentId}"`
+            }]
+          };
+        }
+
+        // Get student profiles for name mapping
+        const students = await classroomService.getCourseStudents(courseId);
+        const studentMap = new Map(
+          students.map(s => [s.userId, s.profile?.name?.fullName || 'Unknown Student'])
+        );
+
+        // Extract submissions with PDF attachments
+        const gradableSubmissions = [];
+        
+        for (const submission of submissions) {
+          if (!submission.userId || submission.state === 'NEW' || submission.state === 'CREATED') {
+            continue; // Skip unsubmitted work
+          }
+
+          const attachments = submission.assignmentSubmission?.attachments || [];
+          
+          for (const attachment of attachments) {
+            if (attachment.driveFile?.id) {
+              // Construct Google Drive download URL
+              const pdfUrl = `https://drive.google.com/uc?export=download&id=${attachment.driveFile.id}`;
+              
+              gradableSubmissions.push({
+                assignmentId,
+                userName: studentMap.get(submission.userId) || 'Unknown Student',
+                userId: submission.userId,
+                pdfUrl,
+                submissionId: submission.id,
+                state: submission.state
+              });
+              break; // Only grade first PDF per student
+            }
+          }
+        }
+
+        if (gradableSubmissions.length === 0) {
+          return {
+            content: [{
+              type: "text",
+              text: `No PDF submissions found to grade for assignment "${assignment.title || assignmentId}". ${submissions.length} submission(s) exist but none have PDF attachments.`
+            }]
+          };
+        }
+
+        // Grade all submissions in parallel
+        console.log(`Grading ${gradableSubmissions.length} submissions in parallel...`);
+        
+        const gradingPromises = gradableSubmissions.map(sub => 
+          gradingService.gradeStudentSubmission(sub)
+            .catch(error => ({
+              userName: sub.userName,
+              userId: sub.userId,
+              assignmentId: sub.assignmentId,
+              submittedPdfUrl: sub.pdfUrl,
+              gradedAt: new Date().toISOString(),
+              overallScore: 0,
+              totalPossiblePoints: 0,
+              percentageScore: 0,
+              sectionScores: [],
+              overallFeedback: `Grading failed: ${error.message}`,
+              learningRecommendations: {
+                needsScaffolding: false,
+                scaffoldingAreas: [],
+                readyForAcceleration: false,
+                accelerationAreas: [],
+                generalRecommendation: "Unable to grade submission"
+              },
+              error: true
+            }))
+        );
+
+        const results = await Promise.all(gradingPromises);
+
+        // Separate successful and failed gradings
+        const successful = results.filter(r => !(r as any).error);
+        const failed = results.filter(r => (r as any).error);
+
+        // Calculate statistics
+        const avgScore = successful.length > 0 
+          ? successful.reduce((sum, r) => sum + r.percentageScore, 0) / successful.length 
+          : 0;
+        
+        const needsSupport = successful.filter(r => r.learningRecommendations.needsScaffolding);
+        const readyForMore = successful.filter(r => r.learningRecommendations.readyForAcceleration);
+
+        // Build response
+        let responseText = `📊 **Grading Complete for "${assignment.title || 'Assignment'}"**\n\n`;
+        responseText += `**Summary:**\n`;
+        responseText += `• Total submissions graded: ${successful.length}/${gradableSubmissions.length}\n`;
+        responseText += `• Average score: ${avgScore.toFixed(1)}%\n`;
+        responseText += `• Students needing support: ${needsSupport.length}\n`;
+        responseText += `• Students ready for acceleration: ${readyForMore.length}\n`;
+        
+        if (failed.length > 0) {
+          responseText += `• Failed to grade: ${failed.length} submission(s)\n`;
+        }
+        
+        responseText += `\n**Individual Results:**\n\n`;
+        
+        // Sort by score (highest first)
+        const sortedResults = [...successful].sort((a, b) => b.percentageScore - a.percentageScore);
+        
+        for (const result of sortedResults) {
+          responseText += `**${result.userName}** (${result.userId})\n`;
+          responseText += `• Score: ${result.overallScore}/${result.totalPossiblePoints} (${result.percentageScore}%)\n`;
+          
+          if (result.sectionScores.length > 0) {
+            responseText += `• Sections: `;
+            responseText += result.sectionScores.map(s => 
+              `${s.sectionName}: ${s.pointsEarned}/${s.pointsPossible}`
+            ).join(', ');
+            responseText += `\n`;
+          }
+          
+          responseText += `• Feedback: ${result.overallFeedback}\n`;
+          
+          if (result.learningRecommendations.needsScaffolding) {
+            responseText += `• 🔶 Needs support in: ${result.learningRecommendations.scaffoldingAreas.join(', ')}\n`;
+          }
+          
+          if (result.learningRecommendations.readyForAcceleration) {
+            responseText += `• 🚀 Ready for acceleration in: ${result.learningRecommendations.accelerationAreas.join(', ')}\n`;
+          }
+          
+          responseText += `• Recommendation: ${result.learningRecommendations.generalRecommendation}\n`;
+          responseText += `\n`;
+        }
+        
+        // Add failed gradings at the end
+        if (failed.length > 0) {
+          responseText += `**Failed Gradings:**\n`;
+          for (const result of failed) {
+            responseText += `• ${result.userName}: ${result.overallFeedback}\n`;
+          }
+        }
+
+        return {
+          content: [{
+            type: "text",
+            text: responseText
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Failed to grade submissions: ${error instanceof Error ? error.message : "Unknown error"}\n\nMake sure:\n1. The assignment exists and has submissions\n2. The assignment was created with generate-worksheet (has answer key)\n3. Students have submitted PDF files`
+          }],
+          isError: true
+        };
+      }
+    }
   );
 
   // Register a simple prompt example
