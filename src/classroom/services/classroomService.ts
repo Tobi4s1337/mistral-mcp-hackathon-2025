@@ -2,12 +2,20 @@ import { ClassroomClient } from '../api/classroomClient.js';
 import { classroom_v1 } from 'googleapis';
 import fs from 'fs/promises';
 import path from 'path';
+import { StudentNotesManager } from '../storage/studentNotesManager.js';
+
+export interface StudentWithNote {
+  student: classroom_v1.Schema$Student;
+  note: string;
+  noteUpdatedAt?: string;
+}
 
 export interface CourseWithDetails {
   course: classroom_v1.Schema$Course;
   announcements?: classroom_v1.Schema$Announcement[];
   teachers?: classroom_v1.Schema$Teacher[];
   studentCount?: number;
+  studentsWithNotes?: StudentWithNote[];
 }
 
 export interface AssignmentWithSubmissions {
@@ -17,10 +25,12 @@ export interface AssignmentWithSubmissions {
 
 export class ClassroomService {
   private static instance: ClassroomService;
-  private client: ClassroomClient;
+  public client: ClassroomClient;
+  private notesManager: StudentNotesManager;
 
   private constructor() {
     this.client = ClassroomClient.getInstance();
+    this.notesManager = StudentNotesManager.getInstance();
   }
 
   static getInstance(): ClassroomService {
@@ -66,10 +76,53 @@ export class ClassroomService {
     }
 
     if (studentsResponse.status === 'fulfilled') {
-      result.studentCount = studentsResponse.value.students?.length || 0;
+      const students = studentsResponse.value.students || [];
+      result.studentCount = students.length;
+
+      // Initialize empty notes for new students and populate existing notes
+      const courseName = course.status === 'fulfilled' ? course.value.name : undefined;
+      result.studentsWithNotes = await this.populateStudentNotes(courseId, students, courseName);
     }
 
     return result;
+  }
+
+  private async populateStudentNotes(
+    courseId: string,
+    students: classroom_v1.Schema$Student[],
+    courseName?: string | null
+  ): Promise<StudentWithNote[]> {
+    const studentsWithNotes: StudentWithNote[] = [];
+
+    for (const student of students) {
+      if (!student.userId || !student.profile?.name?.fullName) continue;
+
+      const studentId = student.userId;
+      const studentName = student.profile.name.fullName;
+
+      // Check if note exists
+      let existingNote = await this.notesManager.getNote(courseId, studentId);
+
+      // If no note exists, create an empty one
+      if (!existingNote) {
+        await this.notesManager.addNote(
+          courseId,
+          studentId,
+          studentName,
+          '',
+          courseName || undefined
+        );
+        existingNote = await this.notesManager.getNote(courseId, studentId);
+      }
+
+      studentsWithNotes.push({
+        student,
+        note: existingNote?.note || '',
+        noteUpdatedAt: existingNote?.updatedAt
+      });
+    }
+
+    return studentsWithNotes;
   }
 
   async getAllAssignments(courseId: string): Promise<classroom_v1.Schema$CourseWork[]> {
@@ -211,7 +264,9 @@ export class ClassroomService {
           try {
             const existing = await fs.readFile(linkFile, 'utf-8');
             links.push(...JSON.parse(existing));
-          } catch {}
+          } catch {
+            // File doesn't exist yet, start with empty array
+          }
           links.push({ title: material.link.title, url: material.link.url });
           await fs.writeFile(linkFile, JSON.stringify(links, null, 2));
         }
@@ -280,7 +335,9 @@ export class ClassroomService {
           try {
             const existing = await fs.readFile(linkFile, 'utf-8');
             links.push(...JSON.parse(existing));
-          } catch {}
+          } catch {
+            // File doesn't exist yet, start with empty array
+          }
           links.push({ title: attachment.link.title, url: attachment.link.url });
           await fs.writeFile(linkFile, JSON.stringify(links, null, 2));
         }
@@ -359,6 +416,177 @@ export class ClassroomService {
       submissions,
       totalDownloadedFiles
     };
+  }
+
+  async getStudentsWithPendingAssignments(courseId: string): Promise<{
+    student: classroom_v1.Schema$Student;
+    pendingAssignments: Array<{
+      assignment: classroom_v1.Schema$CourseWork;
+      submission?: classroom_v1.Schema$StudentSubmission;
+    }>;
+  }[]> {
+    // Get all students and assignments for the course
+    const [students, assignments] = await Promise.all([
+      this.getCourseStudents(courseId),
+      this.getAllAssignments(courseId)
+    ]);
+
+    const studentsWithPending = [];
+
+    for (const student of students) {
+      if (!student.userId) continue;
+
+      const pendingAssignments = [];
+
+      for (const assignment of assignments) {
+        if (!assignment.id || assignment.state !== 'PUBLISHED') continue;
+
+        // Check if assignment has a due date and if it's in the future
+        if (assignment.dueDate) {
+          const dueDate = new Date(
+            assignment.dueDate.year || new Date().getFullYear(),
+            (assignment.dueDate.month || 1) - 1,
+            assignment.dueDate.day || 1
+          );
+
+          // Skip assignments that are past due by more than 7 days
+          const daysPastDue = (Date.now() - dueDate.getTime()) / (1000 * 60 * 60 * 24);
+          if (daysPastDue > 7) continue;
+        }
+
+        // Get submission status for this student
+        try {
+          const submissionsResponse = await this.client.listStudentSubmissions(
+            courseId,
+            assignment.id,
+            50,
+            undefined,
+            student.userId
+          );
+
+          const submission = submissionsResponse.studentSubmissions?.[0];
+
+          // Check if assignment is pending (not turned in or graded)
+          if (!submission || submission.state === 'NEW' || submission.state === 'CREATED' || submission.state === 'RECLAIMED_BY_STUDENT') {
+            pendingAssignments.push({
+              assignment,
+              submission
+            });
+          }
+        } catch (error) {
+          console.error(`Error checking submission for student ${student.userId}:`, error);
+        }
+      }
+
+      if (pendingAssignments.length > 0) {
+        studentsWithPending.push({
+          student,
+          pendingAssignments
+        });
+      }
+    }
+
+    return studentsWithPending;
+  }
+
+  async sendMessageToStudents(
+    courseId: string,
+    studentIds: string[],
+    message: string
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      // Google Classroom doesn't have direct private messaging
+      // We'll create a public announcement visible to all students
+      // Note: Individual targeting requires using assignment comments or email
+
+      await this.client.createAnnouncement(
+        courseId,
+        message,
+        []
+      );
+
+      return {
+        success: true,
+        message: `Message sent to ${studentIds.length} students via course announcement`
+      };
+    } catch (error) {
+      console.error('Error sending message to students:', error);
+      return {
+        success: false,
+        message: `Failed to send message: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    }
+  }
+
+  async nudgeStudentsWithPendingWork(courseId: string): Promise<{
+    success: boolean;
+    nudgedStudents: Array<{
+      studentName: string;
+      pendingCount: number;
+    }>;
+    message: string;
+  }> {
+    try {
+      // Get course details for context
+      const course = await this.client.getCourse(courseId);
+      const courseName = course.name || 'your course';
+
+      // Get students with pending assignments
+      const studentsWithPending = await this.getStudentsWithPendingAssignments(courseId);
+
+      if (studentsWithPending.length === 0) {
+        return {
+          success: true,
+          nudgedStudents: [],
+          message: 'No students with pending assignments found'
+        };
+      }
+
+      const nudgedStudents = [];
+
+      // Create a general announcement about pending work
+      const assignmentsList = new Set<string>();
+      studentsWithPending.forEach(({ pendingAssignments }) => {
+        pendingAssignments.forEach(({ assignment }) => {
+          if (assignment.title) {
+            assignmentsList.add(assignment.title);
+          }
+        });
+      });
+
+      const message = `📚 Reminder: You have pending assignments in ${courseName}!\n\n` +
+        `The following assignments need your attention:\n` +
+        Array.from(assignmentsList).map(title => `• ${title}`).join('\n') +
+        `\n\nPlease complete and submit your work as soon as possible. ` +
+        `If you need help or have questions, don't hesitate to ask!\n\n` +
+        `Keep up the great work! 💪`;
+
+      // Send the announcement
+      await this.client.createAnnouncement(courseId, message);
+
+      // Track nudged students
+      for (const { student, pendingAssignments } of studentsWithPending) {
+        if (student.profile?.name?.fullName) {
+          nudgedStudents.push({
+            studentName: student.profile.name.fullName,
+            pendingCount: pendingAssignments.length
+          });
+        }
+      }
+
+      return {
+        success: true,
+        nudgedStudents,
+        message: `Successfully sent reminder to ${nudgedStudents.length} students with pending assignments`
+      };
+    } catch (error) {
+      console.error('Error nudging students:', error);
+      return {
+        success: false,
+        nudgedStudents: [],
+        message: `Failed to nudge students: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    }
   }
 
   async downloadAllCourseSubmissions(

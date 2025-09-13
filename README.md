@@ -1,130 +1,103 @@
-# Alpic MCP Template
+# EduAdapt MCP Server
 
-A TypeScript template for building MCP servers using Streamable HTTP transport.
+Intelligent classroom management system with Google Classroom integration and AI-powered worksheet generation using Mistral AI.
 
 ## Overview
 
-This template provides a foundation for creating MCP servers that can communicate with AI assistants and other MCP clients. It includes a simple HTTP server implementation with example tools, resource & prompts to help you get started building your own MCP integrations.
+EduAdapt is an MCP server that combines Google Classroom API integration with advanced AI capabilities for personalized education. It generates adaptive worksheets, manages classroom resources, and provides automated grading through Mistral AI.
+
+## Features
+
+- **Google Classroom Integration**: List courses, view assignments, manage announcements
+- **AI Worksheet Generation**: Create age-appropriate worksheets with 11+ activity types
+- **PDF Export**: Professional formatting with answer keys
+- **Adaptive Content**: Automatic complexity adjustment based on grade level
+- **AI Grading**: Automated worksheet evaluation with detailed feedback
 
 ## Prerequisites
 
-- Node.js 22+ (see `.nvmrc` for exact version)
+- Node.js 22+
+- Docker (for PDF generation)
+- Mistral API key
+- Google Cloud OAuth credentials (for Classroom)
 
-## Installation
-
-1. Clone the repository:
-
-```bash
-git clone <repository-url>
-cd mcp-server-template
-```
-
-2. Install dependencies:
+## Quick Start
 
 ```bash
+# Install dependencies
 npm install
-```
 
-3. Create environment file:
-
-```bash
+# Set up environment
 cp .env.example .env
-```
+# Add your MISTRAL_API_KEY to .env
 
-## Usage
+# Run PDF export service
+docker run -p 2305:2305 bedrockio/export-html
 
-### Development
-
-Start the development server with hot-reload:
-
-```bash
+# Start development server
 npm run dev
 ```
 
-The server will start on `http://localhost:3000` and automatically restart when you make changes to the source code.
-
-### Production Build
-
-Build the project for production:
+## Google Classroom Setup
 
 ```bash
-npm run build
+# 1. Add OAuth credentials to credentials.json
+# 2. Authenticate
+npm run auth
+# 3. Test integration
+npm run test
 ```
 
-The compiled JavaScript will be output to the `dist/` directory.
-
-### Running the Inspector
-
-Use the MCP inspector tool to test your server:
+## Testing
 
 ```bash
+# Test Google Classroom integration
+npm run test
+
+# Test worksheet generation
+npm run test:worksheet
+
+# MCP Inspector
 npm run inspector
 ```
 
-## API Endpoints
+## Architecture
 
-- `POST /mcp` - Main MCP communication endpoint
-- `GET /mcp` - Returns "Method not allowed" (405)
-- `DELETE /mcp` - Returns "Method not allowed" (405)
-
-## Development
-
-### Adding New Tools
-
-To add a new tool, modify `src/server.ts`:
-
-```typescript
-server.tool(
-  "tool-name",
-  "Tool description",
-  {
-    // Define your parameters using Zod schemas
-    param: z.string().describe("Parameter description"),
-  },
-  async ({ param }): Promise<CallToolResult> => {
-    // Your tool implementation
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Result: ${param}`,
-        },
-      ],
-    };
-  },
-);
+```
+src/
+├── classroom/          # Google Classroom integration
+│   ├── auth/          # OAuth authentication
+│   ├── api/           # API client wrapper
+│   ├── services/      # Business logic
+│   └── tools/         # MCP tool implementations
+├── worksheets/        # Worksheet generation system
+│   ├── service.ts     # Core generation logic
+│   ├── pdf.ts         # PDF export & S3 upload
+│   └── types.ts       # TypeScript definitions
+├── llm/               # Mistral AI integration
+│   └── mistral.ts     # API client wrapper
+└── server.ts          # MCP server configuration
 ```
 
-### Adding New Prompts
+## MCP Tools Available
 
-To add a new prompt template, modify `src/server.ts`:
+- `google-classroom-courses` - List all courses
+- `google-classroom-course-details` - Get course details with announcements
+- `google-classroom-assignments` - Get assignments with submissions
 
-```typescript
-server.prompt(
-  "prompt-name",
-  "Prompt description",
-  {
-    // Define your parameters using Zod schemas
-    param: z.string().describe("Parameter description"),
-  },
-  async ({ param }): Promise<GetPromptResult> => {
-    return {
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: `Your prompt content with ${param}`,
-          },
-        },
-      ],
-    };
-  },
-);
+## Environment Variables
+
+```env
+MCP_HTTP_PORT=3000
+MISTRAL_API_KEY=your_key
+PDF_EXPORT_SERVICE_URL=http://localhost:2305
+AWS_ACCESS_KEY_ID=optional
+AWS_SECRET_ACCESS_KEY=optional
+S3_BUCKET_NAME=optional
 ```
 
 ## Resources
 
-- [Model Context Protocol Documentation](https://modelcontextprotocol.io/)
-- [MCP SDK Documentation](https://github.com/modelcontextprotocol/typescript-sdk)
-- [Express.js Documentation](https://expressjs.com/)
+- [Mistral AI Documentation](https://docs.mistral.ai/)
+- [Google Classroom API](https://developers.google.com/classroom)
+- [Model Context Protocol](https://modelcontextprotocol.io/)

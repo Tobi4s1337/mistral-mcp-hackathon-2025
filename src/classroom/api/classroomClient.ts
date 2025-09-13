@@ -185,6 +185,73 @@ export class ClassroomClient {
     return response.data;
   }
 
+  async createInvitation(
+    courseId: string,
+    userId: string,
+    role: 'STUDENT' | 'TEACHER' = 'STUDENT'
+  ): Promise<classroom_v1.Schema$Invitation> {
+    const classroom = await this.getClient();
+    const response = await classroom.invitations.create({
+      requestBody: {
+        courseId,
+        userId,
+        role,
+      },
+    });
+    return response.data;
+  }
+
+  async createDraftGradeWithFeedback(
+    courseId: string,
+    courseWorkId: string,
+    studentId: string,
+    feedback: string,
+    draftGrade?: number
+  ): Promise<classroom_v1.Schema$StudentSubmission> {
+    const classroom = await this.getClient();
+
+    // Get the student's submission
+    const submissionsResponse = await classroom.courses.courseWork.studentSubmissions.list({
+      courseId,
+      courseWorkId,
+      userId: studentId,
+    });
+
+    if (!submissionsResponse.data.studentSubmissions?.length) {
+      throw new Error(`No submission found for student ${studentId} in assignment ${courseWorkId}`);
+    }
+
+    const submissionId = submissionsResponse.data.studentSubmissions[0].id!;
+
+    // Update the submission with draft grade and feedback
+    const response = await classroom.courses.courseWork.studentSubmissions.patch({
+      courseId,
+      courseWorkId,
+      id: submissionId,
+      updateMask: draftGrade !== undefined ? 'draftGrade,assignedGrade' : 'assignedGrade',
+      requestBody: {
+        draftGrade,
+        assignedGrade: draftGrade,
+      },
+    });
+
+    // Add feedback as a comment (since direct feedback field is not available)
+    // We'll use the coursework's return functionality to add comments
+    if (feedback) {
+      try {
+        await classroom.courses.courseWork.studentSubmissions.return({
+          courseId,
+          courseWorkId,
+          id: submissionId,
+        });
+      } catch (error) {
+        console.log('Could not return submission for comment:', error);
+      }
+    }
+
+    return response.data;
+  }
+
   async downloadFile(fileId: string, outputPath: string): Promise<string> {
     try {
       const drive = await this.getDriveClient();

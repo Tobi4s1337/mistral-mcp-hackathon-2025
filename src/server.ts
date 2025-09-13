@@ -1,10 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { type CallToolResult, type GetPromptResult, type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
+import { type GetPromptResult, type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   listCourses,
   getCourseDetails,
   getAssignments,
+  getComprehensiveClassroomData,
+  nudgeStudents,
 } from "./classroom/tools/index.js";
 
 export const getServer = (): McpServer => {
@@ -30,7 +32,7 @@ export const getServer = (): McpServer => {
     {
       courseId: z.string().describe('The ID of the course to get details for'),
     },
-    async (args: any) => await getCourseDetails(args)
+    async (args) => await getCourseDetails(args)
   );
 
   server.tool(
@@ -44,7 +46,46 @@ export const getServer = (): McpServer => {
         .default(true)
         .describe('Whether to include submission details for each assignment'),
     },
-    async (args: any) => await getAssignments(args)
+    async (args) => await getAssignments(args)
+  );
+
+  // Register comprehensive Google Classroom data tool
+  server.tool(
+    "google-classroom-comprehensive-data",
+    "Gets ALL Google Classroom data in a single call - courses, students with names, assignments with submissions, teachers, announcements, and student notes. This is the most efficient way to get all classroom information at once. Returns a comprehensive data structure with all courses, each containing full details about students (with their notes from the storage system), teachers, assignments (with submission status), and recent announcements. No parameters required by default. Optional parameters: includeAnnouncements (boolean, default true), includeSubmissions (boolean, default true), maxAssignmentsPerCourse (number, default 20), maxAnnouncementsPerCourse (number, default 10). Use this tool instead of making multiple calls to individual tools for better performance.",
+    {
+      includeAnnouncements: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Whether to include recent announcements for each course'),
+      includeSubmissions: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Whether to include student submissions for assignments'),
+      maxAssignmentsPerCourse: z
+        .number()
+        .optional()
+        .default(20)
+        .describe('Maximum number of assignments to fetch per course'),
+      maxAnnouncementsPerCourse: z
+        .number()
+        .optional()
+        .default(10)
+        .describe('Maximum number of recent announcements to fetch per course'),
+    },
+    async (args) => await getComprehensiveClassroomData(args)
+  );
+
+  // Register nudge students tool
+  server.tool(
+    "google-classroom-nudge-students",
+    "Sends a reminder announcement to all students who have pending assignments in a specific Google Classroom course. REQUIRES a courseId parameter (string). The tool will automatically identify students with incomplete or unsubmitted assignments (excluding those more than 7 days past due), and send a friendly reminder listing the pending assignments. Returns information about which students were nudged and how many pending assignments they have. Perfect for encouraging students to complete their work.",
+    {
+      courseId: z.string().describe('The ID of the course to nudge students in'),
+    },
+    async (args) => await nudgeStudents(args)
   );
 
   // Register a simple prompt example
