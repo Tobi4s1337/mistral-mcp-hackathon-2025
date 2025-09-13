@@ -8,6 +8,7 @@ import {
   getComprehensiveClassroomData,
   nudgeStudents,
 } from "./classroom/tools/index.js";
+import { optimizedWorksheetService } from "./worksheets/index.js";
 
 export const getServer = (): McpServer => {
   const server = new McpServer(
@@ -86,6 +87,67 @@ export const getServer = (): McpServer => {
       courseId: z.string().describe('The ID of the course to nudge students in'),
     },
     async (args) => await nudgeStudents(args)
+  );
+
+  // Register worksheet generation tool
+  server.tool(
+    "generate-worksheet",
+    "Generates a comprehensive, printer-friendly educational worksheet based on a text prompt. The tool automatically creates age-appropriate content with varied question types (fill-in-the-blanks, multiple choice, short answer, essays, math problems, etc.). The worksheet is automatically converted to PDF and uploaded to S3 for easy sharing and printing. An answer key PDF is also generated. Simply provide a description of what you want the worksheet to cover, including subject, topic, grade level or age, and any specific requirements. Examples: 'Create a 4th grade math worksheet on fractions', 'Generate a high school biology worksheet about cell division', 'Make a kindergarten worksheet for learning letters A-E with tracing'. The tool uses AI to generate 15-25 questions/activities in a beautifully formatted, dense layout perfect for classroom use.",
+    {
+      prompt: z.string().describe('Description of the worksheet to generate. Include subject, topic, grade level/age, and any specific requirements.'),
+      includeAnswerKey: z.boolean().optional().default(true).describe('Whether to generate an answer key (default: true)')
+    },
+    async ({ prompt, includeAnswerKey }) => {
+      try {
+        const result = await optimizedWorksheetService.generateWorksheetWithPDF(prompt, includeAnswerKey);
+
+        let responseText = `✅ **Worksheet Generated Successfully!**\n\n`;
+        responseText += `**Title:** ${result.title}\n`;
+        responseText += `**Subject:** ${result.subject}\n`;
+        responseText += `**Grade Level:** ${result.grade}\n\n`;
+        responseText += `**Summary:** ${result.summary}\n\n`;
+
+        if (result.totalPoints) {
+          responseText += `**📊 Grading Information:**\n`;
+          responseText += `• Total Points: ${result.totalPoints}\n`;
+          if (result.gradingBreakdown && result.gradingBreakdown.length > 0) {
+            responseText += `• Points by Section:\n`;
+            result.gradingBreakdown.forEach(section => {
+              responseText += `  - ${section.section}: ${section.points} pts\n`;
+            });
+          }
+          responseText += `\n`;
+        }
+
+        responseText += `**📄 PDF Files:**\n`;
+        responseText += `• Worksheet PDF: ${result.pdfUrl}\n`;
+
+        if (result.answerKeyPdfUrl) {
+          responseText += `• Answer Key PDF (with grading rubric): ${result.answerKeyPdfUrl}\n`;
+        }
+
+        responseText += `\nThe PDFs are ready for download, printing, or sharing with students!`;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: responseText
+            }
+          ]
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to generate worksheet: ${error instanceof Error ? error.message : "Unknown error"}\n\nMake sure:\n1. PDF export service is running: docker run -p 2305:2305 bedrockio/export-html\n2. AWS credentials and S3_BUCKET_NAME are configured in .env\n3. Mistral API key is configured`
+            }
+          ],
+          isError: true
+        };
+      }
+    }
   );
 
   // Register a simple prompt example

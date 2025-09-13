@@ -1,8 +1,10 @@
 export * from "./types.js";
 export * from "./service.js";
 export * from "./pdf.js";
+export * from "./optimized-service.js";
 
 import { worksheetService } from "./service.js";
+import { optimizedWorksheetService } from "./optimized-service.js";
 import { pdfExportService } from "./pdf.js";
 import type { WorksheetGenerationRequest, WorksheetSettings } from "./types.js";
 
@@ -59,4 +61,4 @@ export async function generateWorksheetWithPDF(
   };
 }
 
-export { worksheetService, pdfExportService };
+export { worksheetService, optimizedWorksheetService, pdfExportService };

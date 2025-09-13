@@ -255,12 +255,21 @@ export class PDFExportService {
         Key: key,
         Body: pdfBuffer,
         ContentType: "application/pdf",
-        Metadata: metadata
+        ACL: "public-read",  // Make the file publicly accessible
+        ContentDisposition: `inline; filename="${fileName}"`,  // Show in browser with proper filename
+        CacheControl: "public, max-age=3600"  // Cache for 1 hour
+        // Removed Metadata to avoid header issues
       });
 
       await this.s3Client.send(command);
 
-      return `https://${this.bucketName}.s3.amazonaws.com/${key}`;
+      // Return the public URL
+      const region = process.env.AWS_REGION || "us-east-1";
+      if (region === "us-east-1") {
+        return `https://${this.bucketName}.s3.amazonaws.com/${key}`;
+      } else {
+        return `https://${this.bucketName}.s3.${region}.amazonaws.com/${key}`;
+      }
     } catch (error) {
       console.error("S3 upload error:", error);
       throw new Error(`Failed to upload to S3: ${error instanceof Error ? error.message : "Unknown error"}`);
