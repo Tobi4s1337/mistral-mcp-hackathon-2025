@@ -21,7 +21,8 @@
     "test:worksheet": "tsx --env-file=.env src/test-worksheet.ts",
     "test:assignment": "tsx --env-file=.env src/scripts/test-worksheet-assignment.ts",
     "clear:assignments": "tsx --env-file=.env src/scripts/clear-assignments.ts",
-    "clear": "tsx --env-file=.env src/scripts/clear-assignments.ts"
+    "clear": "tsx --env-file=.env src/scripts/clear-assignments.ts",
+    "list:assignments": "tsx --env-file=.env src/scripts/list-assignments.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",
