@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { ClassroomService } from '../services/classroomService.js';
 
 export const coursesSchema = z.object({});
@@ -61,11 +60,3 @@ export async function listCourses() {
   }
 }
 
-export const coursesTool: Tool = {
-  name: 'google-classroom-courses',
-  description: 'List all Google Classroom courses for the authenticated user',
-  inputSchema: {
-    type: 'object',
-    properties: {},
-  },
-};

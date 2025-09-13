@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { ClassroomService } from '../services/classroomService.js';
 
 export const courseDetailsSchema = z.object({
@@ -90,17 +89,3 @@ export async function getCourseDetails({ courseId }: z.infer<typeof courseDetail
   }
 }
 
-export const courseDetailsTool: Tool = {
-  name: 'google-classroom-course-details',
-  description: 'Get detailed information about a specific Google Classroom course including announcements and teachers',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      courseId: {
-        type: 'string',
-        description: 'The ID of the course to get details for',
-      },
-    },
-    required: ['courseId'],
-  },
-};

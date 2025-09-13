@@ -39,7 +39,7 @@ async function main() {
     }
 
     console.log('🚀 Starting OAuth authentication flow...');
-    console.log('A browser window will open for you to authorize the application.\n');
+    console.log('The authorization URL will be displayed below.\n');
 
     await authManager.authenticateAndSaveCredentials();
 

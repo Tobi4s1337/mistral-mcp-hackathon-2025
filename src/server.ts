@@ -2,9 +2,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { type CallToolResult, type GetPromptResult, type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import {
-  coursesTool,
-  courseDetailsTool,
-  assignmentsTool,
   listCourses,
   getCourseDetails,
   getAssignments,
@@ -24,22 +21,22 @@ export const getServer = (): McpServer => {
 
   // Register Google Classroom tools
   server.tool(
-    coursesTool.name,
-    coursesTool.description,
+    "google-classroom-courses",
+    "List all Google Classroom courses for the authenticated user",
     coursesSchema,
     async () => await listCourses()
   );
 
   server.tool(
-    courseDetailsTool.name,
-    courseDetailsTool.description,
+    "google-classroom-course-details",
+    "Get detailed information about a specific Google Classroom course including announcements and teachers",
     courseDetailsSchema,
     async (args) => await getCourseDetails(args)
   );
 
   server.tool(
-    assignmentsTool.name,
-    assignmentsTool.description,
+    "google-classroom-assignments",
+    "Get assignments for a specific Google Classroom course with optional submission details",
     assignmentsSchema,
     async (args) => await getAssignments(args)
   );

@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { ClassroomService } from '../services/classroomService.js';
 
 export const assignmentsSchema = z.object({
@@ -140,22 +139,3 @@ export async function getAssignments({
   }
 }
 
-export const assignmentsTool: Tool = {
-  name: 'google-classroom-assignments',
-  description: 'Get assignments for a specific Google Classroom course with optional submission details',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      courseId: {
-        type: 'string',
-        description: 'The ID of the course to get assignments for',
-      },
-      includeSubmissions: {
-        type: 'boolean',
-        description: 'Whether to include submission details for each assignment',
-        default: true,
-      },
-    },
-    required: ['courseId'],
-  },
-};

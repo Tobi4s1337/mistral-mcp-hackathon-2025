@@ -3,6 +3,9 @@ import { OAuth2Client } from 'google-auth-library';
 import fs from 'fs/promises';
 import path from 'path';
 import { authenticate } from '@google-cloud/local-auth';
+import http from 'http';
+import url from 'url';
+import crypto from 'crypto';
 
 const TOKEN_PATH = path.join(process.cwd(), 'tokens.json');
 const CREDENTIALS_PATH = path.join(process.cwd(), 'credentials.json');
@@ -40,10 +43,29 @@ export class AuthManager {
       );
     }
 
-    const auth = await authenticate({
-      keyfilePath: CREDENTIALS_PATH,
-      scopes: this.SCOPES,
+    // Load credentials
+    const credentialsContent = await fs.readFile(CREDENTIALS_PATH, 'utf8');
+    const credentials = JSON.parse(credentialsContent).web;
+
+    // Create OAuth2 client
+    const oauth2Client = new google.auth.OAuth2(
+      credentials.client_id,
+      credentials.client_secret,
+      credentials.redirect_uris[0]
+    );
+
+    // Generate auth URL
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: this.SCOPES,
+      prompt: 'consent',
     });
+
+    console.log('\n📋 Please visit this URL to authorize the application:');
+    console.log('\n' + authUrl + '\n');
+
+    // Create local server to handle callback
+    const auth = await this.waitForAuthorizationCode(oauth2Client, credentials.redirect_uris[0]);
 
     await fs.writeFile(TOKEN_PATH, JSON.stringify(auth.credentials));
     console.error('Authentication successful, credentials saved to tokens.json');
@@ -52,6 +74,47 @@ export class AuthManager {
     this.setupTokenRefreshHandler(auth);
 
     return auth;
+  }
+
+  private async waitForAuthorizationCode(oauth2Client: OAuth2Client, redirectUri: string): Promise<OAuth2Client> {
+    return new Promise((resolve, reject) => {
+      const parsedUrl = url.parse(redirectUri);
+      const port = parsedUrl.port || 3000;
+
+      const server = http.createServer(async (req, res) => {
+        try {
+          if (req.url && req.url.indexOf('/auth/google/callback') > -1) {
+            const qs = new url.URL(req.url, `http://localhost:${port}`).searchParams;
+            const code = qs.get('code');
+
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end('<html><body><h1>Authentication successful!</h1><p>You can close this window and return to the terminal.</p></body></html>');
+
+            server.close();
+
+            if (code) {
+              const { tokens } = await oauth2Client.getToken(code);
+              oauth2Client.setCredentials(tokens);
+              resolve(oauth2Client);
+            } else {
+              reject(new Error('No authorization code received'));
+            }
+          }
+        } catch (e) {
+          reject(e);
+        }
+      });
+
+      server.listen(port, () => {
+        console.log(`Waiting for authorization callback on http://localhost:${port}/auth/google/callback`);
+      });
+
+      // Timeout after 5 minutes
+      setTimeout(() => {
+        server.close();
+        reject(new Error('Authentication timeout - no response received within 5 minutes'));
+      }, 5 * 60 * 1000);
+    });
   }
 
   async getAuthClient(): Promise<OAuth2Client> {
