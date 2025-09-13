@@ -1,9 +1,9 @@
 {
-  "name": "mcp-server-template",
-  "version": "0.0.1",
+  "name": "eduadapt-mcp-server",
+  "version": "0.1.0",
   "private": true,
   "main": "dist/index.js",
-  "description": "Alpic MCP Server Template",
+  "description": "EduAdapt MCP Server with Google Classroom Integration",
   "files": [
     "dist"
   ],
@@ -15,12 +15,18 @@
     "build": "tsc",
     "dev": "tsx watch --env-file=.env src/index.ts",
     "start": "node dist/index.js",
-    "inspector": "mcp-inspector http://localhost:3000/mcp"
+    "inspector": "mcp-inspector http://localhost:3000/mcp",
+    "auth": "tsx src/scripts/auth.ts"
   },
   "dependencies": {
+    "@google-cloud/local-auth": "^3.0.1",
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "@types/cors": "^2.8.19",
+    "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
+    "google-auth-library": "^10.3.0",
+    "googleapis": "^134.0.0",
     "zod": "^3.25.51"
   },
   "devDependencies": {
