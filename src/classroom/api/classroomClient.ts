@@ -1,9 +1,13 @@
-import { google, classroom_v1 } from 'googleapis';
+import { google, classroom_v1, drive_v3 } from 'googleapis';
 import { AuthManager } from '../auth/authManager.js';
+import axios from 'axios';
+import fs from 'fs/promises';
+import path from 'path';
 
 export class ClassroomClient {
   private static instance: ClassroomClient;
   private classroom: classroom_v1.Classroom | null = null;
+  private drive: drive_v3.Drive | null = null;
   private authManager: AuthManager;
 
   private constructor() {
@@ -29,6 +33,20 @@ export class ClassroomClient {
     });
 
     return this.classroom;
+  }
+
+  async getDriveClient(): Promise<drive_v3.Drive> {
+    if (this.drive) {
+      return this.drive;
+    }
+
+    const auth = await this.authManager.getAuthClient();
+    this.drive = google.drive({
+      version: 'v3',
+      auth,
+    });
+
+    return this.drive;
   }
 
   async listCourses(pageSize = 50, pageToken?: string): Promise<classroom_v1.Schema$ListCoursesResponse> {
@@ -85,12 +103,14 @@ export class ClassroomClient {
     pageToken?: string
   ): Promise<classroom_v1.Schema$ListCourseWorkResponse> {
     const classroom = await this.getClient();
+    console.log(`[DEBUG] Fetching courseWork for course ${courseId}`);
     const response = await classroom.courses.courseWork.list({
       courseId,
       pageSize,
       pageToken,
-      orderBy: 'dueDate desc',
+      courseWorkStates: ['PUBLISHED', 'DRAFT', 'DELETED'],
     });
+    console.log(`[DEBUG] CourseWork API response:`, JSON.stringify(response.data, null, 2));
     return response.data;
   }
 
@@ -163,5 +183,81 @@ export class ClassroomClient {
       pageSize,
     });
     return response.data;
+  }
+
+  async downloadFile(fileId: string, outputPath: string): Promise<string> {
+    try {
+      const drive = await this.getDriveClient();
+
+      // Get file metadata
+      const fileMetadata = await drive.files.get({
+        fileId,
+        fields: 'name,mimeType,size',
+      });
+
+      const fileName = fileMetadata.data.name || 'unknown';
+      const mimeType = fileMetadata.data.mimeType || '';
+
+      // Ensure output directory exists
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+      // Download the file
+      const response = await drive.files.get(
+        { fileId, alt: 'media' },
+        { responseType: 'stream' }
+      );
+
+      // Save to file
+      const dest = await fs.open(outputPath, 'w');
+      const writeStream = dest.createWriteStream();
+
+      return new Promise((resolve, reject) => {
+        response.data
+          .on('end', async () => {
+            await dest.close();
+            resolve(outputPath);
+          })
+          .on('error', async (error: any) => {
+            await dest.close();
+            reject(error);
+          })
+          .pipe(writeStream);
+      });
+    } catch (error) {
+      console.error(`Error downloading file ${fileId}:`, error);
+      throw error;
+    }
+  }
+
+  async downloadFileFromUrl(url: string, outputPath: string): Promise<string> {
+    try {
+      const auth = await this.authManager.getAuthClient();
+      const tokens = await auth.getAccessToken();
+
+      // Ensure output directory exists
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+      // Download with authorization header
+      const response = await axios({
+        method: 'GET',
+        url,
+        responseType: 'stream',
+        headers: {
+          'Authorization': `Bearer ${tokens.token}`,
+        },
+      });
+
+      // Save to file
+      const writer = (await fs.open(outputPath, 'w')).createWriteStream();
+      response.data.pipe(writer);
+
+      return new Promise((resolve, reject) => {
+        writer.on('finish', () => resolve(outputPath));
+        writer.on('error', reject);
+      });
+    } catch (error) {
+      console.error(`Error downloading from URL ${url}:`, error);
+      throw error;
+    }
   }
 }
