@@ -335,15 +335,18 @@ Example format:
       // Trim whitespace
       cleanHtml = cleanHtml.trim();
 
+      // Parse points from the generated HTML
+      const { totalPoints, gradingBreakdown } = this.parsePointsFromAnswerKey(cleanHtml);
+
       // Wrap in template
       let fullHtml = WORKSHEET_TEMPLATE.replace('__WORKSHEET_TITLE__', 'ANSWER KEY');
-      fullHtml = fullHtml.replace('__WORKSHEET_SUBTITLE__', 'Complete Answer Guide');
+      fullHtml = fullHtml.replace('__WORKSHEET_SUBTITLE__', `Complete Answer Guide - Total Points: ${totalPoints}`);
       fullHtml = fullHtml.replace('__WORKSHEET_CONTENT__', cleanHtml);
 
       return {
         html: fullHtml,
-        totalPoints: 100, // Default since we're not parsing it
-        gradingBreakdown: []
+        totalPoints,
+        gradingBreakdown
       };
     } catch (error) {
       console.error("Answer key generation error:", error);
@@ -355,8 +358,94 @@ Example format:
 
       return {
         html: fallbackHtml,
-        totalPoints: 0,
+        totalPoints: 100, // Fallback to 100 if parsing fails
         gradingBreakdown: []
+      };
+    }
+  }
+
+  private parsePointsFromAnswerKey(html: string): {
+    totalPoints: number;
+    gradingBreakdown: Array<{ section: string; points: number; }>;
+  } {
+    try {
+      let totalPoints = 0;
+      const gradingBreakdown: Array<{ section: string; points: number; }> = [];
+
+      // Regular expression to find point values like [5 pts], [10 points], etc.
+      const pointPattern = /\[(\d+)\s*(?:pts?|points?)\]/gi;
+
+      // Find all sections
+      const sectionPattern = /<h2[^>]*class="ws-section-title"[^>]*>(.*?)<\/h2>/gi;
+      const sections = html.split(sectionPattern);
+
+      let currentSection = "General";
+
+      // Parse the HTML to find sections and their points
+      const lines = html.split('\n');
+      let sectionPoints = 0;
+
+      for (const line of lines) {
+        // Check if this is a section title
+        const sectionMatch = line.match(/<h2[^>]*class="ws-section-title"[^>]*>(.*?)<\/h2>/i);
+        if (sectionMatch) {
+          // Save previous section if it had points
+          if (sectionPoints > 0) {
+            gradingBreakdown.push({ section: currentSection, points: sectionPoints });
+          }
+          // Start new section
+          currentSection = sectionMatch[1].replace(/<[^>]*>/g, '').trim();
+          sectionPoints = 0;
+        }
+
+        // Look for point values in this line
+        let match;
+        while ((match = pointPattern.exec(line)) !== null) {
+          const points = parseInt(match[1], 10);
+          if (!isNaN(points)) {
+            totalPoints += points;
+            sectionPoints += points;
+          }
+        }
+      }
+
+      // Add the last section if it had points
+      if (sectionPoints > 0) {
+        gradingBreakdown.push({ section: currentSection, points: sectionPoints });
+      }
+
+      // If no points were found, estimate based on question count
+      if (totalPoints === 0) {
+        // Count questions by looking for q-num spans
+        const questionPattern = /<span[^>]*class="q-num"[^>]*>/gi;
+        const questionMatches = html.match(questionPattern);
+        const questionCount = questionMatches ? questionMatches.length : 0;
+
+        if (questionCount > 0) {
+          // Assume 5 points per question as default
+          const pointsPerQuestion = 5;
+          totalPoints = questionCount * pointsPerQuestion;
+
+          // Try to group by sections
+          if (gradingBreakdown.length === 0) {
+            gradingBreakdown.push({
+              section: "All Questions",
+              points: totalPoints
+            });
+          }
+        } else {
+          // Fallback to 100 points if we can't determine question count
+          totalPoints = 100;
+        }
+      }
+
+      return { totalPoints, gradingBreakdown };
+    } catch (error) {
+      console.error("Error parsing points from answer key:", error);
+      // Return fallback values
+      return {
+        totalPoints: 100,
+        gradingBreakdown: [{ section: "All Questions", points: 100 }]
       };
     }
   }

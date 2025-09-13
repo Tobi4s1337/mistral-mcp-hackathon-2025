@@ -15,11 +15,12 @@ body {
   max-width: 8.5in;
   margin: 0 auto;
   padding: 0.5in;
+  padding-top: 70px; /* Extra space for logo */
 }
 
 /* Print Optimization */
 @media print {
-  body { margin: 0; padding: 0.25in; }
+  body { margin: 0; padding: 0.25in; padding-top: 70px; }
   .no-break { page-break-inside: avoid; }
   .page-break { page-break-after: always; }
 }

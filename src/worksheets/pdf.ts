@@ -40,6 +40,25 @@ export class PDFExportService {
   }
 
   private wrapHTMLContent(html: string, title: string): string {
+    // Check if the HTML already has its own complete structure (from worksheet template)
+    if (html.includes('<!DOCTYPE html>')) {
+      // If it's already a complete HTML document, inject the watermark into it
+      const watermarkHtml = `
+    <img src="https://i.ibb.co/TB8pj7PG/eduadaptlogo.jpg"
+         class="eduadapt-watermark"
+         alt="EduAdapt Logo"
+         style="position: absolute; top: 20px; right: 20px; width: 60px; height: auto; opacity: 1; z-index: 1000;">`;
+
+      // Insert the watermark right after the <body> tag
+      const bodyIndex = html.indexOf('<body>');
+      if (bodyIndex > -1) {
+        const insertPosition = bodyIndex + 6; // Length of '<body>'
+        return html.slice(0, insertPosition) + watermarkHtml + html.slice(insertPosition);
+      }
+      return html;
+    }
+
+    // Otherwise wrap it with basic HTML structure (for non-worksheet content)
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -59,6 +78,17 @@ export class PDFExportService {
             .page-break {
                 page-break-after: always;
             }
+            .eduadapt-watermark {
+                position: absolute !important;
+                top: 20px !important;
+                right: 20px !important;
+                page-break-after: avoid;
+            }
+            /* Hide watermark on pages after the first */
+            @page:left .eduadapt-watermark,
+            @page:right .eduadapt-watermark {
+                display: none;
+            }
         }
 
         body {
@@ -69,6 +99,17 @@ export class PDFExportService {
             background: white;
             margin: 0;
             padding: 20px;
+            position: relative;
+        }
+
+        .eduadapt-watermark {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 60px;
+            height: auto;
+            opacity: 1;
+            z-index: 1000;
         }
 
         h1 {
@@ -175,6 +216,9 @@ export class PDFExportService {
     </style>
 </head>
 <body>
+    <img src="https://i.ibb.co/TB8pj7PG/eduadaptlogo.jpg"
+         class="eduadapt-watermark"
+         alt="EduAdapt Logo">
     <h1>${title}</h1>
     ${html}
 </body>
