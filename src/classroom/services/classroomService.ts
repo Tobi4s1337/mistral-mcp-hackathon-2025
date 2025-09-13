@@ -1,5 +1,5 @@
 import { ClassroomClient } from '../api/classroomClient.js';
-import { classroom_v1 } from 'googleapis';
+import { classroom_v1, drive_v3 } from 'googleapis';
 import fs from 'fs/promises';
 import path from 'path';
 import { StudentNotesManager } from '../storage/studentNotesManager.js';
@@ -21,6 +21,26 @@ export interface CourseWithDetails {
 export interface AssignmentWithSubmissions {
   assignment: classroom_v1.Schema$CourseWork;
   submissions?: classroom_v1.Schema$StudentSubmission[];
+}
+
+export interface CreateWorksheetAssignmentOptions {
+  courseId: string;
+  title: string;
+  pdfUrl: string;
+  description?: string;
+  instructions?: string;
+  maxPoints?: number;
+  dueDate?: Date;
+  assigneeMode?: 'ALL_STUDENTS' | 'INDIVIDUAL_STUDENTS' | 'GROUP_WITH_EXCLUSIONS';
+  studentIds?: string[]; // For INDIVIDUAL_STUDENTS mode
+  excludeStudentIds?: string[]; // For GROUP_WITH_EXCLUSIONS mode
+}
+
+export interface WorksheetAssignmentResult {
+  assignment: classroom_v1.Schema$CourseWork;
+  driveFile: drive_v3.Schema$File;
+  assignedToCount: number;
+  message: string;
 }
 
 export class ClassroomService {
@@ -155,7 +175,8 @@ export class ClassroomService {
           try {
             const submissionsResponse = await this.client.listStudentSubmissions(
               courseId,
-              assignment.id
+              assignment.id,
+              50
             );
             result.submissions = submissionsResponse.studentSubmissions || [];
           } catch (error) {
@@ -378,7 +399,8 @@ export class ClassroomService {
     // Get all submissions for this assignment
     const submissionsResponse = await this.client.listStudentSubmissions(
       courseId,
-      assignmentId
+      assignmentId,
+      50
     );
 
     const submissions = await Promise.all(
@@ -661,5 +683,143 @@ export class ClassroomService {
       results,
       allDownloadedFiles
     };
+  }
+
+  async createAssignmentWithWorksheet(
+    options: CreateWorksheetAssignmentOptions
+  ): Promise<WorksheetAssignmentResult> {
+    const {
+      courseId,
+      title,
+      pdfUrl,
+      description,
+      instructions,
+      maxPoints,
+      dueDate,
+      assigneeMode = 'ALL_STUDENTS',
+      studentIds,
+      excludeStudentIds,
+    } = options;
+
+    try {
+      // Step 1: Upload PDF to Google Drive
+      console.log('Uploading worksheet PDF to Google Drive...');
+      const driveFile = await this.client.uploadPDFFromUrl(
+        pdfUrl,
+        `${title}.pdf`,
+        courseId
+      );
+
+      if (!driveFile.id) {
+        throw new Error('Failed to upload PDF to Google Drive');
+      }
+
+      // Step 2: Create assignment materials
+      const materials: classroom_v1.Schema$Material[] = [{
+        driveFile: {
+          driveFile: {
+            id: driveFile.id,
+            title: driveFile.name || `${title}.pdf`,
+            alternateLink: driveFile.webViewLink || undefined,
+            thumbnailUrl: undefined,
+          },
+          shareMode: 'VIEW',
+        },
+      }];
+
+      // Step 3: Build assignment description
+      let fullDescription = '';
+      if (description) {
+        fullDescription += description;
+      }
+      if (instructions) {
+        fullDescription += (fullDescription ? '\n\n' : '') + '**Instructions:**\n' + instructions;
+      }
+      if (!fullDescription) {
+        fullDescription = `Complete the attached worksheet: ${title}`;
+      }
+
+      // Step 4: Determine assignee mode and get student list if needed
+      let actualAssigneeMode: 'ALL_STUDENTS' | 'INDIVIDUAL_STUDENTS' = 'ALL_STUDENTS';
+      let targetStudentIds: string[] = [];
+
+      if (assigneeMode === 'INDIVIDUAL_STUDENTS') {
+        actualAssigneeMode = 'INDIVIDUAL_STUDENTS';
+        targetStudentIds = studentIds || [];
+      } else if (assigneeMode === 'GROUP_WITH_EXCLUSIONS' && excludeStudentIds && excludeStudentIds.length > 0) {
+        // Get all students and exclude specified ones
+        const allStudents = await this.getCourseStudents(courseId);
+        const excludeSet = new Set(excludeStudentIds);
+        targetStudentIds = allStudents
+          .filter(student => student.userId && !excludeSet.has(student.userId))
+          .map(student => student.userId!);
+
+        if (targetStudentIds.length > 0) {
+          actualAssigneeMode = 'INDIVIDUAL_STUDENTS';
+        }
+      }
+
+      // Step 5: Create the course work
+      const courseWork: classroom_v1.Schema$CourseWork = {
+        title,
+        description: fullDescription,
+        materials,
+        workType: 'ASSIGNMENT',
+        state: 'PUBLISHED',
+        maxPoints: maxPoints || 100,
+        assigneeMode: actualAssigneeMode,
+      };
+
+      // Add individual students options if needed
+      if (actualAssigneeMode === 'INDIVIDUAL_STUDENTS' && targetStudentIds.length > 0) {
+        courseWork.individualStudentsOptions = {
+          studentIds: targetStudentIds,
+        };
+      }
+
+      // Add due date if provided
+      if (dueDate) {
+        const due = new Date(dueDate);
+        courseWork.dueDate = {
+          year: due.getFullYear(),
+          month: due.getMonth() + 1,
+          day: due.getDate(),
+        };
+        courseWork.dueTime = {
+          hours: due.getHours(),
+          minutes: due.getMinutes(),
+        };
+      }
+
+      // Step 6: Create the assignment
+      const assignment = await this.client.createCourseWork(courseId, courseWork);
+
+      // Step 7: Prepare result
+      let assignedToCount = 0;
+      let message = '';
+
+      if (actualAssigneeMode === 'ALL_STUDENTS') {
+        const students = await this.getCourseStudents(courseId);
+        assignedToCount = students.length;
+        message = `Assignment "${title}" created and assigned to all ${assignedToCount} students`;
+      } else if (actualAssigneeMode === 'INDIVIDUAL_STUDENTS') {
+        assignedToCount = targetStudentIds.length;
+        if (assigneeMode === 'GROUP_WITH_EXCLUSIONS') {
+          message = `Assignment "${title}" created and assigned to ${assignedToCount} students (excluded ${excludeStudentIds?.length || 0} students)`;
+        } else {
+          message = `Assignment "${title}" created and assigned to ${assignedToCount} specific students`;
+        }
+      }
+
+      return {
+        assignment,
+        driveFile,
+        assignedToCount,
+        message,
+      };
+    } catch (error) {
+      console.error('Error creating worksheet assignment:', error);
+      throw new Error(`Failed to create worksheet assignment: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 }

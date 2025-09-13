@@ -141,6 +141,8 @@ export class ClassroomClient {
   async listStudentSubmissions(
     courseId: string,
     courseWorkId: string,
+    pageSize = 50,
+    pageToken?: string,
     userId?: string
   ): Promise<classroom_v1.Schema$ListStudentSubmissionsResponse> {
     const classroom = await this.getClient();
@@ -148,6 +150,8 @@ export class ClassroomClient {
       courseId,
       courseWorkId,
       userId,
+      pageSize,
+      pageToken,
       states: ['TURNED_IN', 'RETURNED', 'RECLAIMED_BY_STUDENT', 'NEW', 'CREATED'],
     });
     return response.data;
@@ -326,5 +330,115 @@ export class ClassroomClient {
       console.error(`Error downloading from URL ${url}:`, error);
       throw error;
     }
+  }
+
+  async uploadPDFToDrive(pdfPath: string, fileName: string, courseId?: string): Promise<drive_v3.Schema$File> {
+    try {
+      const drive = await this.getDriveClient();
+      const { createReadStream } = await import('fs');
+
+      // Create file metadata
+      const fileMetadata: drive_v3.Schema$File = {
+        name: fileName,
+        mimeType: 'application/pdf',
+      };
+
+      // If courseId is provided, try to find the course folder
+      if (courseId) {
+        try {
+          const classroom = await this.getClient();
+          const course = await classroom.courses.get({ id: courseId });
+
+          // Check if course has a drive folder
+          if (course.data.teacherFolder?.id) {
+            fileMetadata.parents = [course.data.teacherFolder.id];
+          }
+        } catch (error) {
+          console.log('Could not get course folder, uploading to root:', error);
+        }
+      }
+
+      // Create a read stream for the PDF file
+      const fileStream = createReadStream(pdfPath);
+
+      // Upload file to Drive
+      const response = await drive.files.create({
+        requestBody: fileMetadata,
+        media: {
+          mimeType: 'application/pdf',
+          body: fileStream,
+        },
+        fields: 'id,name,webViewLink,webContentLink',
+      });
+
+      // Share the file with anyone with the link
+      await drive.permissions.create({
+        fileId: response.data.id!,
+        requestBody: {
+          type: 'anyone',
+          role: 'reader',
+        },
+      });
+
+      return response.data;
+    } catch (error) {
+      console.error('Error uploading PDF to Drive:', error);
+      throw error;
+    }
+  }
+
+  async uploadPDFFromUrl(pdfUrl: string, fileName: string, courseId?: string): Promise<drive_v3.Schema$File> {
+    try {
+      // Download PDF to temp location
+      const tempPath = path.join('/tmp', `${Date.now()}_${fileName}`);
+
+      // Download the PDF
+      const response = await axios({
+        method: 'GET',
+        url: pdfUrl,
+        responseType: 'arraybuffer',
+      });
+
+      // Save to temp file
+      await fs.writeFile(tempPath, response.data);
+
+      // Upload to Drive
+      const driveFile = await this.uploadPDFToDrive(tempPath, fileName, courseId);
+
+      // Clean up temp file
+      await fs.unlink(tempPath).catch(console.error);
+
+      return driveFile;
+    } catch (error) {
+      console.error('Error uploading PDF from URL:', error);
+      throw error;
+    }
+  }
+
+  async modifyAssignees(
+    courseId: string,
+    courseWorkId: string,
+    assigneeMode: 'ALL_STUDENTS' | 'INDIVIDUAL_STUDENTS',
+    studentIds?: string[]
+  ): Promise<classroom_v1.Schema$CourseWork> {
+    const classroom = await this.getClient();
+
+    const requestBody: any = {
+      assigneeMode,
+    };
+
+    if (assigneeMode === 'INDIVIDUAL_STUDENTS' && studentIds) {
+      requestBody.modifyIndividualStudentsOptions = {
+        addStudentIds: studentIds,
+      };
+    }
+
+    const response = await classroom.courses.courseWork.modifyAssignees({
+      courseId,
+      id: courseWorkId,
+      requestBody,
+    });
+
+    return response.data;
   }
 }

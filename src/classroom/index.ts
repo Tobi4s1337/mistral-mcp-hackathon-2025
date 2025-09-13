@@ -2,7 +2,13 @@
 export { AuthManager } from './auth/authManager.js';
 export { ClassroomClient } from './api/classroomClient.js';
 export { ClassroomService } from './services/classroomService.js';
-export type { CourseWithDetails, AssignmentWithSubmissions, StudentWithNote } from './services/classroomService.js';
+export type {
+  CourseWithDetails,
+  AssignmentWithSubmissions,
+  StudentWithNote,
+  CreateWorksheetAssignmentOptions,
+  WorksheetAssignmentResult
+} from './services/classroomService.js';
 
 // Student notes management
 export { StudentNotesManager } from './storage/studentNotesManager.js';
