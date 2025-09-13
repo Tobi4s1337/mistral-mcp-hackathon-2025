@@ -11,6 +11,7 @@ const EnvSchema = z.object({
   AWS_SECRET_ACCESS_KEY: z.string().optional(),
   AWS_REGION: z.string().optional().default("us-east-1"),
   S3_BUCKET_NAME: z.string().optional(),
+  BRIA_API_KEY: z.string().optional(),
 });
 
 const parsedEnv = EnvSchema.safeParse(process.env);

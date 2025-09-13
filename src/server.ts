@@ -12,6 +12,8 @@ import {
 import { optimizedWorksheetService } from "./worksheets/index.js";
 import { gradingService } from "./grading/index.js";
 import { ClassroomService } from "./classroom/services/classroomService.js";
+import { initializeBriaClient } from "./bria/service.js";
+import { config } from "./config.js";
 
 export const getServer = (): McpServer => {
   const server = new McpServer(
@@ -472,6 +474,62 @@ export const getServer = (): McpServer => {
           content: [{
             type: "text",
             text: `Failed to grade submissions: ${error instanceof Error ? error.message : "Unknown error"}\n\nMake sure:\n1. The assignment exists and has submissions\n2. The assignment was created with generate-worksheet (has answer key)\n3. Students have submitted PDF files`
+          }],
+          isError: true
+        };
+      }
+    }
+  );
+
+  // Register Bria AI image generation tool
+  server.tool(
+    "generate-image",
+    "Generates high-quality images using Bria AI based on text prompts. Perfect for creating motivational images for students, educational illustrations, or visual aids for worksheets. The tool supports various aspect ratios and styles (photography or art). Returns the URL of the generated image that can be shared with students or embedded in materials. Use this for creating engaging visual content to enhance learning experiences.",
+    {
+      prompt: z.string().describe('The text prompt describing the image to generate. Be specific about what you want to see.'),
+      aspectRatio: z.enum(['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9'])
+        .optional()
+        .default('16:9')
+        .describe('The aspect ratio of the generated image. Default: 16:9 (good for presentations)'),
+      style: z.enum(['photography', 'art'])
+        .optional()
+        .default('art')
+        .describe('The visual style: photography for realistic images, art for illustrations. Default: art'),
+      isMotivational: z.boolean()
+        .optional()
+        .default(false)
+        .describe('Whether to optimize the prompt for motivational/educational content. Adds uplifting and encouraging elements.')
+    },
+    async ({ prompt, aspectRatio, style, isMotivational }) => {
+      try {
+        // Initialize Bria client if needed
+        if (!config.BRIA_API_KEY) {
+          throw new Error('Bria API key not configured. Please set BRIA_API_KEY environment variable.');
+        }
+        
+        const briaClient = initializeBriaClient({ apiKey: config.BRIA_API_KEY });
+        
+        let imageUrl: string;
+        
+        if (isMotivational) {
+          // Use the specialized motivational image generation
+          imageUrl = await briaClient.generateMotivationalImage(prompt, style);
+        } else {
+          // Use standard image generation
+          imageUrl = await briaClient.generateSingleImage(prompt, aspectRatio);
+        }
+        
+        return {
+          content: [{
+            type: "text",
+            text: `✅ **Image Generated Successfully!**\n\n**Image URL:** ${imageUrl}\n\n**Prompt:** ${prompt}\n**Style:** ${style}\n**Aspect Ratio:** ${aspectRatio}\n\nYou can share this URL with students or use it in educational materials. The image is hosted on Bria's servers and will remain accessible.`
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Failed to generate image: ${error instanceof Error ? error.message : 'Unknown error'}\n\nPlease check that:\n1. The BRIA_API_KEY is configured correctly\n2. Your prompt follows Bria's content guidelines\n3. The API service is accessible`
           }],
           isError: true
         };
