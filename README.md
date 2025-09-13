@@ -1,5 +1,9 @@
 # EduAdapt MCP Server
 
+<p align="center">
+  <img src="src/worksheets/eduadaptlogo.png" alt="EduAdapt Logo" width="200"/>
+</p>
+
 Intelligent classroom management system with Google Classroom integration, AI-powered worksheet generation, automated grading, and image generation capabilities.
 
 ## Overview
