@@ -743,16 +743,19 @@ export class ClassroomService {
       let feedbackSent = result.feedbackAdded;
       if (feedback && !result.feedbackAdded) {
         try {
-          // Create a personalized announcement for feedback
-          const feedbackMessage = `📝 **Feedback for ${studentName} on "${assignment.title || 'Assignment'}"**\n\n` +
-            `Grade: ${grade}/${maxPoints} (${Math.round((grade / maxPoints) * 100)}%)\n\n` +
+          // Create a personalized announcement for feedback - sent only to the specific student
+          const feedbackMessage = `📝 **Personal Feedback on "${assignment.title || 'Assignment'}"**\n\n` +
+            `Hi ${studentName},\n\n` +
+            `Your grade: ${grade}/${maxPoints} (${Math.round((grade / maxPoints) * 100)}%)\n\n` +
             `**Teacher's Feedback:**\n${feedback}\n\n` +
             `Keep up the great work! If you have any questions about this feedback, please reach out.`;
 
           await this.client.createAnnouncement(
             courseId,
             feedbackMessage,
-            []
+            [],
+            'INDIVIDUAL_STUDENTS',
+            [studentId]  // Send only to this specific student
           );
           feedbackSent = true;
         } catch (announcementError) {

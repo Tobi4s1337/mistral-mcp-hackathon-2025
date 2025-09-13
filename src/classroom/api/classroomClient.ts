@@ -83,16 +83,29 @@ export class ClassroomClient {
   async createAnnouncement(
     courseId: string,
     text: string,
-    materials?: classroom_v1.Schema$Material[]
+    materials?: classroom_v1.Schema$Material[],
+    assigneeMode?: 'ALL_STUDENTS' | 'INDIVIDUAL_STUDENTS',
+    studentIds?: string[]
   ): Promise<classroom_v1.Schema$Announcement> {
     const classroom = await this.getClient();
+    
+    const requestBody: classroom_v1.Schema$Announcement = {
+      text,
+      materials,
+      state: 'PUBLISHED',
+      assigneeMode: assigneeMode || 'ALL_STUDENTS',
+    };
+    
+    // Add individual students options if specified
+    if (assigneeMode === 'INDIVIDUAL_STUDENTS' && studentIds && studentIds.length > 0) {
+      requestBody.individualStudentsOptions = {
+        studentIds: studentIds
+      };
+    }
+    
     const response = await classroom.courses.announcements.create({
       courseId,
-      requestBody: {
-        text,
-        materials,
-        state: 'PUBLISHED',
-      },
+      requestBody,
     });
     return response.data;
   }

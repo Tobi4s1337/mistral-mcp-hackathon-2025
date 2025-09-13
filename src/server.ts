@@ -8,6 +8,7 @@ import {
   getComprehensiveClassroomData,
   nudgeStudents,
   createWorksheetAssignment,
+  createAnnouncement,
 } from "./classroom/tools/index.js";
 import { optimizedWorksheetService } from "./worksheets/index.js";
 import { gradingService } from "./grading/index.js";
@@ -92,6 +93,39 @@ export const getServer = (): McpServer => {
       courseId: z.string().describe('The ID of the course to nudge students in'),
     },
     async (args) => await nudgeStudents(args)
+  );
+
+  // Register create announcement tool with optional image generation
+  server.tool(
+    "google-classroom-create-announcement",
+    "Creates an announcement in a Google Classroom course with optional AI-generated image attachment. REQUIRES a courseId and text message. Can optionally generate an educational image using Bria AI based on a prompt, which will be automatically uploaded to Google Drive and attached to the announcement. Supports targeting all students or specific students only. Perfect for making engaging announcements with visual content to capture student attention.",
+    {
+      courseId: z.string().describe('The ID of the course to create the announcement in. Must be obtained from google-classroom-courses tool first'),
+      text: z.string().describe('The announcement message text (max 30,000 characters)'),
+      imagePrompt: z.string().optional().describe('Optional: Prompt to generate an educational image using Bria AI that will be attached to the announcement'),
+      imageAspectRatio: z.enum(['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9'])
+        .optional()
+        .default('16:9')
+        .describe('Aspect ratio for the generated image. Default: 16:9'),
+      imageStyle: z.enum(['photography', 'art'])
+        .optional()
+        .default('art')
+        .describe('Style for the generated image: photography or art. Default: art'),
+      assigneeMode: z.enum(['ALL_STUDENTS', 'INDIVIDUAL_STUDENTS'])
+        .optional()
+        .default('ALL_STUDENTS')
+        .describe('Who should receive the announcement: ALL_STUDENTS (default) or INDIVIDUAL_STUDENTS (requires studentIds)'),
+      studentIds: z.array(z.string())
+        .optional()
+        .describe('List of specific student IDs to receive the announcement (only used when assigneeMode is INDIVIDUAL_STUDENTS)'),
+      materials: z.array(z.object({
+        type: z.enum(['link', 'driveFile', 'youtubeVideo']).describe('Type of material to attach'),
+        url: z.string().optional().describe('URL for link or YouTube video'),
+        driveFileId: z.string().optional().describe('Google Drive file ID'),
+        title: z.string().optional().describe('Title for the material')
+      })).optional().describe('Additional materials to attach to the announcement')
+    },
+    async (args) => await createAnnouncement(args)
   );
 
   // Register worksheet generation tool
@@ -540,7 +574,7 @@ export const getServer = (): McpServer => {
   // Register set grade and send feedback tool
   server.tool(
     "google-classroom-set-grade-feedback",
-    "Sets a grade for a specific student submission and sends personalized feedback. This tool updates the student's grade in Google Classroom and delivers feedback either as a comment or announcement. REQUIRES courseId, assignmentId, and studentId parameters. Use this tool after grading student work (e.g., after using google-classroom-grade-all-submissions) to set final grades and provide individual feedback. The grade must be within the assignment's maximum points range. Feedback is optional but highly recommended for student growth. By default, sets the final grade; use isDraft=true for draft grades that students won't see immediately. Returns confirmation of grade setting and feedback delivery status. Perfect for completing the grading workflow with personalized communication to students.",
+    "Sets a grade for a specific student submission and sends personalized feedback PRIVATELY to that student only. This tool updates the student's grade in Google Classroom and delivers feedback as a private announcement visible only to the specific student. REQUIRES courseId, assignmentId, and studentId parameters. Use this tool after grading student work (e.g., after using google-classroom-grade-all-submissions) to set final grades and provide individual feedback. The grade must be within the assignment's maximum points range. Feedback is sent as an individual announcement, ensuring privacy and personalized communication. By default, sets the final grade; use isDraft=true for draft grades that students won't see immediately. Returns confirmation of grade setting and feedback delivery status.",
     {
       courseId: z.string().describe('The ID of the course. Must be obtained from google-classroom-courses tool first'),
       assignmentId: z.string().describe('The ID of the assignment. Must be obtained from google-classroom-assignments tool'),
