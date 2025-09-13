@@ -10,8 +10,9 @@ export type {
   WorksheetAssignmentResult
 } from './services/classroomService.js';
 
-// Student notes management
+// Storage management
 export { StudentNotesManager } from './storage/studentNotesManager.js';
+export { WorksheetStorageManager } from './storage/worksheetStorageManager.js';
 
 // Export all tools
 export * from './tools/index.js';

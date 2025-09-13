@@ -3,6 +3,7 @@ import { classroom_v1, drive_v3 } from 'googleapis';
 import fs from 'fs/promises';
 import path from 'path';
 import { StudentNotesManager } from '../storage/studentNotesManager.js';
+import { WorksheetStorageManager } from '../storage/worksheetStorageManager.js';
 
 export interface StudentWithNote {
   student: classroom_v1.Schema$Student;
@@ -47,10 +48,12 @@ export class ClassroomService {
   private static instance: ClassroomService;
   public client: ClassroomClient;
   private notesManager: StudentNotesManager;
+  private worksheetStorage: WorksheetStorageManager;
 
   private constructor() {
     this.client = ClassroomClient.getInstance();
     this.notesManager = StudentNotesManager.getInstance();
+    this.worksheetStorage = WorksheetStorageManager.getInstance();
   }
 
   static getInstance(): ClassroomService {
@@ -794,7 +797,32 @@ export class ClassroomService {
       // Step 6: Create the assignment
       const assignment = await this.client.createCourseWork(courseId, courseWork);
 
-      // Step 7: Prepare result
+      // Step 7: Link worksheet to assignment if it exists in storage
+      if (assignment.id) {
+        try {
+          // Check if we have worksheet data for this PDF URL
+          const worksheetData = await this.worksheetStorage.getWorksheetByPdfUrl(pdfUrl);
+          if (worksheetData) {
+            // Get course name for storage
+            const course = await this.client.getCourse(courseId);
+            const courseName = course.name || undefined;
+
+            // Link the worksheet to this assignment
+            await this.worksheetStorage.linkWorksheetToAssignment(
+              pdfUrl,
+              assignment.id,
+              courseId,
+              courseName
+            );
+            console.log(`Linked worksheet to assignment ${assignment.id}`);
+          }
+        } catch (storageError) {
+          console.error('Failed to link worksheet to assignment:', storageError);
+          // Continue even if storage fails
+        }
+      }
+
+      // Step 8: Prepare result
       let assignedToCount = 0;
       let message = '';
 

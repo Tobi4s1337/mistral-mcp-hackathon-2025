@@ -48,6 +48,19 @@ export async function createWorksheetAssignment(args: CreateWorksheetAssignmentA
 
     responseText += `The worksheet has been uploaded to Google Drive and attached to the assignment. Students can now access it through Google Classroom!`;
 
+    // Check if this worksheet has an answer key stored
+    if (result.assignment.id) {
+      try {
+        const worksheetStorage = (await import('../storage/worksheetStorageManager.js')).WorksheetStorageManager.getInstance();
+        const worksheetData = await worksheetStorage.getWorksheetByAssignment(result.assignment.id);
+        if (worksheetData && worksheetData.answerKeyPdfUrl) {
+          responseText += `\n\n📝 **Answer Key Available**: The answer key for this worksheet has been stored and can be used for grading.`;
+        }
+      } catch (error) {
+        // Ignore storage check errors
+      }
+    }
+
     return {
       content: [
         {

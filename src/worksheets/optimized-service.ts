@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getLangchainMistralClient } from "../llm/langchain-mistral.js";
 import { WORKSHEET_TEMPLATE, CSS_CLASS_REFERENCE } from "./template.js";
 import { pdfExportService } from "./pdf.js";
+import { WorksheetStorageManager } from "../classroom/storage/worksheetStorageManager.js";
 
 const WorksheetOutputSchema = z.object({
   title: z.string().describe("The title of the worksheet"),
@@ -12,6 +13,7 @@ const WorksheetOutputSchema = z.object({
 });
 
 export class OptimizedWorksheetService {
+  private worksheetStorage = WorksheetStorageManager.getInstance();
   private buildSystemPrompt(): string {
     return `You are an expert educational worksheet creator. Generate ONLY the HTML body content for a worksheet using predefined CSS classes.
 
@@ -246,6 +248,28 @@ FOLLOW THE EXAMPLE FORMAT EXACTLY:
 
     if (!pdfResult.s3Url) {
       throw new Error("Failed to upload PDF to S3");
+    }
+
+    // Store worksheet information immediately
+    if (answerKeyPdfUrl) {
+      try {
+        await this.worksheetStorage.addWorksheet(
+          pdfResult.s3Url,
+          answerKeyPdfUrl,
+          worksheet.title,
+          {
+            subject: worksheet.subject,
+            grade: worksheet.grade,
+            summary: worksheet.summary,
+            totalPoints,
+            gradingBreakdown
+          }
+        );
+        console.log('Stored worksheet data for future assignment creation');
+      } catch (storageError) {
+        console.error('Failed to store worksheet data:', storageError);
+        // Continue even if storage fails
+      }
     }
 
     return {
