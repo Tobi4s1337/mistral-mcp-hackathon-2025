@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { ClassroomService } from '../services/classroomService.js';
+import { type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 export const courseDetailsSchema = z.object({
   courseId: z.string().describe('The ID of the course to get details for'),
 });
 
-export async function getCourseDetails({ courseId }: z.infer<typeof courseDetailsSchema>) {
+export async function getCourseDetails({ courseId }: z.infer<typeof courseDetailsSchema>): Promise<CallToolResult> {
   try {
     const service = ClassroomService.getInstance();
     const courseDetails = await service.getCourseWithDetails(courseId);

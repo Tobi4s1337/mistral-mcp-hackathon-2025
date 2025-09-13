@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { ClassroomService } from '../services/classroomService.js';
+import { type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 export const coursesSchema = z.object({});
 
-export async function listCourses() {
+export async function listCourses(): Promise<CallToolResult> {
   try {
     const service = ClassroomService.getInstance();
     const courses = await service.getAllCourses();
