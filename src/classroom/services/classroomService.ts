@@ -688,6 +688,103 @@ export class ClassroomService {
     };
   }
 
+  async setGradeAndFeedback(
+    courseId: string,
+    assignmentId: string,
+    studentId: string,
+    grade: number,
+    feedback?: string,
+    isDraft: boolean = false
+  ): Promise<{
+    success: boolean;
+    studentName: string;
+    grade: number;
+    feedbackSent: boolean;
+    message: string;
+    submission?: classroom_v1.Schema$StudentSubmission;
+  }> {
+    try {
+      // Get student information for better feedback
+      const students = await this.getCourseStudents(courseId);
+      const student = students.find(s => s.userId === studentId);
+      const studentName = student?.profile?.name?.fullName || 'Unknown Student';
+
+      // Get the assignment details for context
+      const assignment = await this.client.getCourseWork(courseId, assignmentId);
+      const maxPoints = assignment.maxPoints || 100;
+
+      // Validate grade is within range
+      if (grade < 0 || grade > maxPoints) {
+        throw new Error(`Grade must be between 0 and ${maxPoints}`);
+      }
+
+      // Get the student's submission
+      const submission = await this.client.getStudentSubmissionByUserId(
+        courseId,
+        assignmentId,
+        studentId
+      );
+
+      if (!submission || !submission.id) {
+        throw new Error(`No submission found for student ${studentName} (${studentId}) in assignment ${assignment.title || assignmentId}`);
+      }
+
+      // Set the grade and feedback
+      const result = await this.client.setGradeAndFeedback(
+        courseId,
+        assignmentId,
+        submission.id,
+        grade,
+        feedback,
+        isDraft
+      );
+
+      // If feedback wasn't added directly and it was provided, send as announcement
+      let feedbackSent = result.feedbackAdded;
+      if (feedback && !result.feedbackAdded) {
+        try {
+          // Create a personalized announcement for feedback
+          const feedbackMessage = `📝 **Feedback for ${studentName} on "${assignment.title || 'Assignment'}"**\n\n` +
+            `Grade: ${grade}/${maxPoints} (${Math.round((grade / maxPoints) * 100)}%)\n\n` +
+            `**Teacher's Feedback:**\n${feedback}\n\n` +
+            `Keep up the great work! If you have any questions about this feedback, please reach out.`;
+
+          await this.client.createAnnouncement(
+            courseId,
+            feedbackMessage,
+            []
+          );
+          feedbackSent = true;
+        } catch (announcementError) {
+          console.error('Failed to send feedback as announcement:', announcementError);
+          feedbackSent = false;
+        }
+      }
+
+      const gradeType = isDraft ? 'draft' : 'final';
+      const message = `Successfully set ${gradeType} grade for ${studentName}: ${grade}/${maxPoints} (${Math.round((grade / maxPoints) * 100)}%)` +
+        (feedbackSent ? ' and sent feedback' : feedback ? ' (feedback could not be sent directly)' : '');
+
+      return {
+        success: true,
+        studentName,
+        grade,
+        feedbackSent,
+        message,
+        submission: result.submission
+      };
+    } catch (error) {
+      console.error('Error setting grade and feedback:', error);
+      return {
+        success: false,
+        studentName: 'Unknown',
+        grade: 0,
+        feedbackSent: false,
+        message: `Failed to set grade: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    }
+  }
+
   async createAssignmentWithWorksheet(
     options: CreateWorksheetAssignmentOptions
   ): Promise<WorksheetAssignmentResult> {

@@ -479,6 +479,73 @@ export const getServer = (): McpServer => {
     }
   );
 
+  // Register set grade and send feedback tool
+  server.tool(
+    "google-classroom-set-grade-feedback",
+    "Sets a grade for a specific student submission and sends personalized feedback. This tool updates the student's grade in Google Classroom and delivers feedback either as a comment or announcement. REQUIRES courseId, assignmentId, and studentId parameters. Use this tool after grading student work (e.g., after using google-classroom-grade-all-submissions) to set final grades and provide individual feedback. The grade must be within the assignment's maximum points range. Feedback is optional but highly recommended for student growth. By default, sets the final grade; use isDraft=true for draft grades that students won't see immediately. Returns confirmation of grade setting and feedback delivery status. Perfect for completing the grading workflow with personalized communication to students.",
+    {
+      courseId: z.string().describe('The ID of the course. Must be obtained from google-classroom-courses tool first'),
+      assignmentId: z.string().describe('The ID of the assignment. Must be obtained from google-classroom-assignments tool'),
+      studentId: z.string().describe('The ID of the student (user ID). Can be obtained from comprehensive data or student lists'),
+      grade: z.number().describe('The numeric grade to assign. Must be between 0 and the assignment\'s maximum points'),
+      feedback: z.string().optional().describe('Personalized feedback message for the student. Will be sent as an announcement if direct comments are not available'),
+      isDraft: z.boolean().optional().default(false).describe('Whether to set as draft grade (not visible to student) or final grade (visible immediately). Default: false (final grade)')
+    },
+    async ({ courseId, assignmentId, studentId, grade, feedback, isDraft }) => {
+      try {
+        const classroomService = ClassroomService.getInstance();
+        
+        const result = await classroomService.setGradeAndFeedback(
+          courseId,
+          assignmentId,
+          studentId,
+          grade,
+          feedback,
+          isDraft
+        );
+
+        if (!result.success) {
+          return {
+            content: [{
+              type: "text",
+              text: result.message
+            }],
+            isError: true
+          };
+        }
+
+        let responseText = `✅ **Grade Set Successfully**\n\n`;
+        responseText += `**Student:** ${result.studentName}\n`;
+        responseText += `**Grade:** ${result.grade} points\n`;
+        responseText += `**Grade Type:** ${isDraft ? 'Draft (not visible to student)' : 'Final (visible to student)'}\n`;
+        
+        if (feedback) {
+          responseText += `**Feedback Status:** ${result.feedbackSent ? '✅ Sent successfully' : '⚠️ Could not send directly (check announcements)'}\n`;
+          if (result.feedbackSent) {
+            responseText += `\n📝 **Feedback Message:**\n${feedback}\n`;
+          }
+        }
+        
+        responseText += `\n${result.message}`;
+
+        return {
+          content: [{
+            type: "text",
+            text: responseText
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Failed to set grade and feedback: ${error instanceof Error ? error.message : "Unknown error"}\n\nMake sure:\n1. The course, assignment, and student IDs are valid\n2. The student has a submission for this assignment\n3. The grade is within the valid range (0 to max points)\n4. You have permission to grade this assignment`
+          }],
+          isError: true
+        };
+      }
+    }
+  );
+
   // Register a simple prompt example
   server.prompt(
     "greeting-template",

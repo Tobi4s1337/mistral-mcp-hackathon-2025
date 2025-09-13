@@ -205,55 +205,93 @@ export class ClassroomClient {
     return response.data;
   }
 
-  async createDraftGradeWithFeedback(
+  async setGradeAndFeedback(
     courseId: string,
     courseWorkId: string,
-    studentId: string,
-    feedback: string,
-    draftGrade?: number
-  ): Promise<classroom_v1.Schema$StudentSubmission> {
+    submissionId: string,
+    grade: number,
+    feedback?: string,
+    isDraft: boolean = false
+  ): Promise<{
+    submission: classroom_v1.Schema$StudentSubmission;
+    feedbackAdded: boolean;
+  }> {
     const classroom = await this.getClient();
 
-    // Get the student's submission
-    const submissionsResponse = await classroom.courses.courseWork.studentSubmissions.list({
-      courseId,
-      courseWorkId,
-      userId: studentId,
-    });
+    // Prepare update fields based on whether it's draft or final grade
+    const updateFields: string[] = [];
+    const requestBody: classroom_v1.Schema$StudentSubmission = {};
 
-    if (!submissionsResponse.data.studentSubmissions?.length) {
-      throw new Error(`No submission found for student ${studentId} in assignment ${courseWorkId}`);
+    if (isDraft) {
+      updateFields.push('draftGrade');
+      requestBody.draftGrade = grade;
+    } else {
+      updateFields.push('assignedGrade');
+      requestBody.assignedGrade = grade;
     }
 
-    const submissionId = submissionsResponse.data.studentSubmissions[0].id!;
-
-    // Update the submission with draft grade and feedback
+    // Update the submission with the grade
     const response = await classroom.courses.courseWork.studentSubmissions.patch({
       courseId,
       courseWorkId,
       id: submissionId,
-      updateMask: draftGrade !== undefined ? 'draftGrade,assignedGrade' : 'assignedGrade',
-      requestBody: {
-        draftGrade,
-        assignedGrade: draftGrade,
-      },
+      updateMask: updateFields.join(','),
+      requestBody,
     });
 
-    // Add feedback as a comment (since direct feedback field is not available)
-    // We'll use the coursework's return functionality to add comments
+    let feedbackAdded = false;
+
+    // Add feedback as a private comment if provided
     if (feedback) {
       try {
-        await classroom.courses.courseWork.studentSubmissions.return({
-          courseId,
-          courseWorkId,
-          id: submissionId,
-        });
+        // First, ensure the submission is in RETURNED state to add teacher comments
+        const currentSubmission = response.data;
+        
+        // If submission is TURNED_IN, we need to return it first
+        if (currentSubmission.state === 'TURNED_IN') {
+          await classroom.courses.courseWork.studentSubmissions.return({
+            courseId,
+            courseWorkId,
+            id: submissionId,
+          });
+        }
+
+        // Now add the feedback as a teacher comment
+        // Note: The Google Classroom API doesn't have a direct comment endpoint in v1,
+        // but we can use the Drive API to add comments to attached documents
+        // For now, we'll mark feedback as not added directly
+        console.log(`Feedback to be communicated separately: ${feedback}`);
+        feedbackAdded = false;
       } catch (error) {
-        console.log('Could not return submission for comment:', error);
+        console.error('Error adding feedback:', error);
+        feedbackAdded = false;
       }
     }
 
-    return response.data;
+    return {
+      submission: response.data,
+      feedbackAdded,
+    };
+  }
+
+  async getStudentSubmissionByUserId(
+    courseId: string,
+    courseWorkId: string,
+    userId: string
+  ): Promise<classroom_v1.Schema$StudentSubmission | null> {
+    const classroom = await this.getClient();
+    
+    const submissionsResponse = await classroom.courses.courseWork.studentSubmissions.list({
+      courseId,
+      courseWorkId,
+      userId,
+    });
+
+    if (!submissionsResponse.data.studentSubmissions?.length) {
+      return null;
+    }
+
+    return submissionsResponse.data.studentSubmissions[0];
   }
 
   async downloadFile(fileId: string, outputPath: string): Promise<string> {
